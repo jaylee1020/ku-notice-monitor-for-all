@@ -16,10 +16,7 @@ def build_relevant_message(
 ) -> str:
     """관련 공지가 있을 때 텔레그램 메시지 생성"""
     today = datetime.now().strftime("%Y-%m-%d")
-    header = (
-        f"건국대 공지 ({today})\n"
-        f"새 공지 {total_new}건 중 관련 {len(matched)}건\n"
-    )
+    header = f"{today} 새 공지 {total_new}건 중 관련 {len(matched)}건\n"
 
     items = []
     for i, (article, score, reason) in enumerate(matched, 1):
@@ -36,7 +33,7 @@ def build_relevant_message(
 def build_no_new_message() -> str:
     """새 공지가 없을 때 메시지"""
     today = datetime.now().strftime("%Y-%m-%d")
-    return f"건국대 공지 ({today})\n새로운 공지가 없습니다."
+    return f"{today} 새로운 공지가 없습니다."
 
 
 def split_message(text: str) -> list[str]:
