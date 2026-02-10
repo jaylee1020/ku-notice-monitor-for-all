@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from feeds import fetch_all_feeds, filter_new_articles, load_state, save_state, mark_as_seen
+from feeds import fetch_all_feeds, filter_new_articles, load_state, save_state, mark_as_seen, enrich_articles_with_body
 from matcher import match_articles
 from notifier import notify_relevant, notify_no_new
 
@@ -43,7 +43,11 @@ async def run():
         save_state(state, str(state_path))
         return
 
-    # 5. Gemini 관련도 분석
+    # 5. 새 공지 본문 크롤링
+    print("[크롤링] 새 공지 본문 수집 중...")
+    enrich_articles_with_body(new_articles)
+
+    # 6. Gemini 관련도 분석
     print("[분석] Gemini로 관련도 분석 중...")
     matched = match_articles(new_articles, config)
     print(f"[분석] 관련 공지: {len(matched)}건")

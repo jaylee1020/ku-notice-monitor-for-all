@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 
 from google import genai
 
@@ -36,7 +37,7 @@ def build_prompt(articles: list[Article], profile_text: str) -> str:
     """Gemini에게 보낼 배치 프롬프트 생성"""
     article_list = ""
     for i, a in enumerate(articles, 1):
-        desc = a.description[:100] if a.description else "설명 없음"
+        desc = a.description[:300] if a.description else "설명 없음"
         article_list += f"{i}. [{a.board_name}] {a.title} - {desc}\n"
 
     return f"""당신은 한국 대학생을 위한 공지사항 관련도 분류기입니다.
@@ -70,19 +71,24 @@ def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
     profile_text = build_profile_text(config)
     prompt = build_prompt(articles, profile_text)
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-        )
-        text = response.text.strip()
-        # JSON 블록이 ```json ... ``` 로 감싸져 있을 수 있음
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        return json.loads(text)
-    except Exception as e:
-        print(f"[Gemini API 오류] {e}")
-        return []
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            text = response.text.strip()
+            # JSON 블록이 ```json ... ``` 로 감싸져 있을 수 있음
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            return json.loads(text)
+        except Exception as e:
+            print(f"[Gemini API 오류] 시도 {attempt + 1}/2: {e}")
+            if attempt == 0:
+                print("[재시도] 5초 후 재시도합니다...")
+                time.sleep(5)
+
+    return []
 
 
 def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:

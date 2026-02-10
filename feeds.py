@@ -135,6 +135,47 @@ def filter_new_articles(articles: list[Article], state: dict) -> list[Article]:
     return [a for a in articles if a.id not in seen]
 
 
+def fetch_article_body(url: str) -> str:
+    """게시물 웹페이지에서 본문 텍스트를 크롤링하여 반환 (최대 500자)"""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            html = resp.read().decode("utf-8")
+        # hwp_editor_board_content 영역에서 본문 추출
+        idx = html.find("hwp_editor_board_content")
+        if idx < 0:
+            return ""
+        # 해당 div의 끝까지 추출 (최대 5000자 범위)
+        snippet = html[idx:idx + 5000]
+        # HTML 태그 제거
+        text = re.sub(r"<[^>]+>", " ", snippet)
+        text = re.sub(r"\s+", " ", text).strip()
+        # 클래스명 부분 제거
+        if text.startswith("hwp_editor_board_content"):
+            text = text[len("hwp_editor_board_content"):].strip()
+            # data 속성 부분 제거
+            if text.startswith('"'):
+                idx2 = text.find(">")
+                if idx2 >= 0:
+                    text = text[idx2 + 1:].strip()
+        return text[:500]
+    except Exception as e:
+        print(f"[본문 크롤링 오류] {url}: {e}")
+        return ""
+
+
+def enrich_articles_with_body(articles: list[Article]):
+    """새 공지들의 본문을 크롤링하여 description에 추가"""
+    for a in articles:
+        if a.link:
+            body = fetch_article_body(a.link)
+            if body:
+                a.description = body
+
+
 def mark_as_seen(articles: list[Article], state: dict):
     """공지 ID를 state에 기록"""
     now = datetime.now().isoformat()
