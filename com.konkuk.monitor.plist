@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.konkuk.monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/ijuyeong/Desktop/학교 아카이브/main.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/ijuyeong/Desktop/학교 아카이브</string>
+    <key>StandardOutPath</key>
+    <string>/Users/ijuyeong/Desktop/학교 아카이브/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ijuyeong/Desktop/학교 아카이브/logs/stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GEMINI_API_KEY</key>
+        <string>YOUR_GEMINI_API_KEY</string>
+        <key>TELEGRAM_BOT_TOKEN</key>
+        <string>YOUR_TELEGRAM_BOT_TOKEN</string>
+        <key>TELEGRAM_CHAT_ID</key>
+        <string>YOUR_TELEGRAM_CHAT_ID</string>
+    </dict>
+</dict>
+</plist>

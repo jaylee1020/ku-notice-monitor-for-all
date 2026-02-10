@@ -1,0 +1,68 @@
+# 건국대학교 공지 모니터링 에이전트 설정
+
+# === 사용자 프로필 (본인 정보에 맞게 수정) ===
+profile:
+  major: "컴퓨터공학부"         # KU자유전공학부 → 컴퓨터공학부 전공진입
+  previous_major: "KU자유전공학부"
+  year: 2                     # 25학번 (2학년)
+  campus: "서울"
+  status: "재학"
+
+# === 관심 키워드 ===
+keywords:
+  high:                       # 높은 우선순위 키워드
+    - 장학
+    - 등록금
+    - 수강신청
+    - 전공진입
+    - 컴퓨터
+    - 소프트웨어
+    - SW
+    - IT
+    - 코딩
+  medium:                     # 중간 우선순위 키워드
+    - 취업
+    - 인턴
+    - 공모전
+    - 교환
+    - 해외
+    - 국제
+    - 해커톤
+    - 프로그래밍
+    - AI
+    - 데이터
+
+# === RSS 피드 설정 ===
+feeds:
+  학사공지:
+    id: 234
+    enabled: true
+  장학공지:
+    id: 235
+    enabled: true
+  취창업공지:
+    id: 236
+    enabled: true
+  국제교류:
+    id: 237
+    enabled: true
+  학생생활:
+    id: 238
+    enabled: true
+  입찰공고공지:
+    id: 239
+    enabled: false
+  일반공지:
+    id: 240
+    enabled: true
+
+# === Gemini 설정 ===
+gemini:
+  model: "gemini-2.0-flash"
+  relevance_threshold: 3      # 1-5 점수 중 이 점수 이상이면 관련 공지로 분류
+
+# === 설정 ===
+settings:
+  state_file: "state.json"
+  base_url: "https://www.konkuk.ac.kr"
+  rss_url_template: "https://www.konkuk.ac.kr/bbs/konkuk/{board_id}/rssList.do"
