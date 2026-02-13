@@ -1,6 +1,8 @@
 """건국대학교 공지 모니터링 에이전트 - 메인 실행 파일"""
 
 import asyncio
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,9 +14,22 @@ from notifier import notify_relevant, notify_no_new, notify_no_relevant
 
 
 def load_config() -> dict:
+    """config.yaml 로드 후 환경변수로 개인정보 오버라이드"""
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    # 환경변수 PROFILE_JSON으로 프로필 오버라이드
+    profile_json = os.environ.get("PROFILE_JSON", "")
+    if profile_json:
+        config["profile"] = json.loads(profile_json)
+
+    # 환경변수 KEYWORDS_JSON으로 키워드 오버라이드
+    keywords_json = os.environ.get("KEYWORDS_JSON", "")
+    if keywords_json:
+        config["keywords"] = json.loads(keywords_json)
+
+    return config
 
 
 async def run():

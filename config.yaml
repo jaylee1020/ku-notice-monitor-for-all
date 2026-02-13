@@ -1,36 +1,23 @@
 # 건국대학교 공지 모니터링 에이전트 설정
 
-# === 사용자 프로필 (본인 정보에 맞게 수정) ===
+# === 사용자 프로필 ===
+# 개인정보는 GitHub Secrets에 저장하고 환경변수로 주입합니다.
+# 환경변수 PROFILE_JSON 예시:
+#   {"major":"컴퓨터공학부","previous_major":"KU자유전공학부","year":2,"campus":"서울","status":"재학"}
+# 환경변수 KEYWORDS_JSON 예시:
+#   {"high":["장학","등록금","수강신청"],"medium":["취업","인턴","공모전"]}
+#
+# 아래는 환경변수가 없을 때 사용되는 기본값입니다.
 profile:
-  major: "컴퓨터공학부"         # KU자유전공학부 → 컴퓨터공학부 전공진입
-  previous_major: "KU자유전공학부"
-  year: 2                     # 25학번 (2학년)
-  campus: "서울"
-  status: "재학"
+  major: ""
+  previous_major: ""
+  year: 0
+  campus: ""
+  status: ""
 
-# === 관심 키워드 ===
 keywords:
-  high:                       # 높은 우선순위 키워드
-    - 장학
-    - 등록금
-    - 수강신청
-    - 전공진입
-    - 컴퓨터
-    - 소프트웨어
-    - SW
-    - IT
-    - 코딩
-  medium:                     # 중간 우선순위 키워드
-    - 취업
-    - 인턴
-    - 공모전
-    - 교환
-    - 해외
-    - 국제
-    - 해커톤
-    - 프로그래밍
-    - AI
-    - 데이터
+  high: []
+  medium: []
 
 # === RSS 피드 설정 ===
 feeds:
