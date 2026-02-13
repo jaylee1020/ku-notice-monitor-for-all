@@ -8,7 +8,6 @@ GitHub Actions 크론잡(5분 간격)으로 실행되어
 import asyncio
 import json
 import os
-import time
 from pathlib import Path
 
 from telegram import Bot
@@ -17,6 +16,7 @@ from main import load_config
 from feeds import fetch_all_feeds, Article
 
 SEARCH_STATE_FILE = Path(__file__).parent / "search_state.json"
+MAX_TRACKED_UPDATES = 200
 
 HELP_TEXT = """건국대 공지 검색 봇 사용법
 
@@ -32,14 +32,47 @@ HELP_TEXT = """건국대 공지 검색 봇 사용법
 
 def load_search_state() -> dict:
     if SEARCH_STATE_FILE.exists():
-        with open(SEARCH_STATE_FILE, "r") as f:
-            return json.load(f)
-    return {"last_update_id": 0}
+        try:
+            with open(SEARCH_STATE_FILE, "r") as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[검색] 상태 파일 읽기 실패: {e}")
+            return {"last_update_id": 0, "processed_update_ids": []}
+
+        if not isinstance(state, dict):
+            return {"last_update_id": 0, "processed_update_ids": []}
+
+        last_update_id = state.get("last_update_id", 0)
+        try:
+            last_update_id = int(last_update_id)
+        except (TypeError, ValueError):
+            last_update_id = 0
+
+        processed = []
+        for update_id in state.get("processed_update_ids", []):
+            try:
+                processed.append(int(update_id))
+            except (TypeError, ValueError):
+                continue
+
+        return {
+            "last_update_id": last_update_id,
+            "processed_update_ids": processed[-MAX_TRACKED_UPDATES:],
+        }
+
+    return {"last_update_id": 0, "processed_update_ids": []}
 
 
 def save_search_state(state: dict):
-    with open(SEARCH_STATE_FILE, "w") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    payload = {
+        "last_update_id": state.get("last_update_id", 0),
+        "processed_update_ids": state.get("processed_update_ids", [])[-MAX_TRACKED_UPDATES:],
+    }
+
+    tmp_file = SEARCH_STATE_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_file.replace(SEARCH_STATE_FILE)
 
 
 # --- 검색 ---
@@ -149,6 +182,7 @@ async def run():
 
     bot = Bot(token=token)
     state = load_search_state()
+    processed_update_ids = set(state.get("processed_update_ids", []))
 
     # offset: 마지막 처리한 update_id + 1 부터 조회
     offset = state.get("last_update_id", 0)
@@ -168,42 +202,54 @@ async def run():
     articles = None
 
     for update in updates:
-        state["last_update_id"] = update.update_id
-
-        if not update.message or not update.message.text:
+        update_id = int(update.update_id)
+        if update_id in processed_update_ids:
+            print(f"[검색] 중복 업데이트 스킵: {update_id}")
             continue
 
-        msg = update.message
+        try:
+            state["last_update_id"] = update_id
 
-        # 설정된 채팅에서 온 메시지만 처리
-        if str(msg.chat_id) != chat_id:
-            continue
+            if not update.message or not update.message.text:
+                continue
 
-        query = msg.text.strip()
+            msg = update.message
 
-        # /help 명령
-        if query in ("/help", "/start"):
-            await bot.send_message(chat_id=chat_id, text=HELP_TEXT)
-            continue
+            # 설정된 채팅에서 온 메시지만 처리
+            if str(msg.chat_id) != chat_id:
+                continue
 
-        # 빈 메시지 무시
-        if not query or query.startswith("/"):
-            continue
+            query = msg.text.strip()
 
-        # 처음 검색 시 RSS 피드 한 번만 수집
-        if articles is None:
-            print("[검색] RSS 피드 수집 중...")
-            articles = fetch_all_feeds(config)
-            print(f"[검색] {len(articles)}건 수집 완료")
+            # /help 명령
+            if query in ("/help", "/start"):
+                await bot.send_message(chat_id=chat_id, text=HELP_TEXT)
+                continue
 
-        # 검색 실행
-        print(f"[검색] 쿼리: {query}")
-        results, gemini_used = search_articles(query, articles)
-        response = format_search_response(query, results, gemini_used)
-        await bot.send_message(chat_id=chat_id, text=response)
-        print(f"[검색] 응답 전송 ({len(results)}건)")
+            # 빈 메시지 무시
+            if not query or query.startswith("/"):
+                continue
 
-    save_search_state(state)
+            # 처음 검색 시 RSS 피드 한 번만 수집
+            if articles is None:
+                print("[검색] RSS 피드 수집 중...")
+                articles = fetch_all_feeds(config)
+                print(f"[검색] {len(articles)}건 수집 완료")
+
+            # 검색 실행
+            print(f"[검색] 쿼리: {query}")
+            results, gemini_used = search_articles(query, articles)
+            response = format_search_response(query, results, gemini_used)
+            await bot.send_message(chat_id=chat_id, text=response)
+            print(f"[검색] 응답 전송 ({len(results)}건)")
+        except Exception as e:
+            print(f"[검색] 업데이트 처리 실패: update_id={update_id}, error={e}")
+        finally:
+            if update_id not in processed_update_ids:
+                processed_update_ids.add(update_id)
+            state["processed_update_ids"] = list(processed_update_ids)
+            save_search_state(state)
+
     print("[검색] 완료")
 
 

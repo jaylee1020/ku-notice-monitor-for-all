@@ -52,6 +52,13 @@ def is_empty_feed_item(entry) -> bool:
     return "No exist data" in title or "no exist data" in title.lower()
 
 
+def _to_int(value, default=0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def fetch_feed(board_name: str, board_id: int, config: dict) -> list[Article]:
     """단일 RSS 피드를 수집하고 Article 리스트로 반환"""
     base_url = config["settings"]["base_url"]
@@ -63,7 +70,7 @@ def fetch_feed(board_name: str, board_id: int, config: dict) -> list[Article]:
     ctx.verify_mode = ssl.CERT_NONE
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, context=ctx) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
             xml_data = resp.read()
         feed = feedparser.parse(xml_data)
     except Exception as e:
@@ -88,9 +95,9 @@ def fetch_feed(board_name: str, board_id: int, config: dict) -> list[Article]:
             description=entry.get("description", "").strip(),
             board_name=board_name,
             board_id=board_id,
-            view_count=int(entry.get("viewco", 0) or 0),
+            view_count=_to_int(entry.get("viewco", 0) or 0),
             is_pinned=entry.get("topchk", "") == "FIXTOP",
-            attachment_count=int(entry.get("atchco", 0) or 0),
+            attachment_count=_to_int(entry.get("atchco", 0) or 0),
         ))
 
     return articles
