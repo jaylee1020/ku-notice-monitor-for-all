@@ -5,12 +5,16 @@ import json
 import os
 import sys
 from pathlib import Path
+from dataclasses import asdict
+from datetime import datetime
 
 import yaml
 
 from feeds import fetch_all_feeds, filter_new_articles, load_state, save_state, mark_as_seen, enrich_articles_with_body
 from matcher import match_articles
 from notifier import notify_relevant, notify_no_new, notify_no_relevant
+
+LATEST_ARTICLES_FILE = Path(__file__).parent / "latest_articles.json"
 
 
 def load_config() -> dict:
@@ -32,6 +36,18 @@ def load_config() -> dict:
     return config
 
 
+def save_latest_articles(articles: list) -> None:
+    """main 실행 시점의 전체 공지 스크랩 결과를 캐시 파일로 저장한다."""
+    payload = {
+        "updated_at": datetime.now().isoformat(),
+        "articles": [asdict(article) for article in articles],
+    }
+    tmp_file = LATEST_ARTICLES_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    tmp_file.replace(LATEST_ARTICLES_FILE)
+
+
 async def run():
     print("=== 건국대 공지 모니터링 시작 ===")
 
@@ -47,6 +63,7 @@ async def run():
     print("[피드] RSS 피드 수집 중...")
     all_articles = fetch_all_feeds(config)
     print(f"[피드] 총 {len(all_articles)}건 수집")
+    save_latest_articles(all_articles)
 
     # 4. 새 공지 필터링
     new_articles = filter_new_articles(all_articles, state)

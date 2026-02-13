@@ -37,6 +37,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          git diff --staged --quiet || git commit -m "Update state.json [skip ci]"
+          if [ -f state.json ]; then
+            git add state.json
+          fi
+          if [ -f latest_articles.json ]; then
+            git add latest_articles.json
+          fi
+          git diff --staged --quiet || git commit -m "Update cache files [skip ci]"
           git push

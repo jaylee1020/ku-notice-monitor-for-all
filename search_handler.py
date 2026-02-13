@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from datetime import datetime
 
 from telegram import Bot
 
@@ -16,7 +17,9 @@ from main import load_config
 from feeds import Article, fetch_all_feeds
 
 SEARCH_STATE_FILE = Path(__file__).parent / "search_state.json"
+LATEST_ARTICLES_FILE = Path(__file__).parent / "latest_articles.json"
 MAX_TRACKED_UPDATES = 200
+MAX_CACHE_AGE_SECONDS = 36 * 60 * 60
 
 HELP_TEXT = """건국대 공지 검색 봇 사용법
 
@@ -71,6 +74,73 @@ def save_search_state(state: dict):
     with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     tmp_file.replace(SEARCH_STATE_FILE)
+
+
+def _to_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_latest_articles() -> tuple[list[Article], str | None]:
+    if not LATEST_ARTICLES_FILE.exists():
+        print("[검색] 최신 스크랩 캐시가 없습니다.")
+        return [], None
+
+    try:
+        with open(LATEST_ARTICLES_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[검색] 스크랩 캐시 읽기 실패: {e}")
+        return [], None
+
+    updated_at: str | None = None
+    raw_articles = []
+
+    if isinstance(payload, dict):
+        updated_at = payload.get("updated_at")
+        raw_articles = payload.get("articles", [])
+    elif isinstance(payload, list):
+        raw_articles = payload
+    else:
+        return [], None
+
+    if not isinstance(raw_articles, list):
+        return [], updated_at
+
+    articles = []
+    for item in raw_articles:
+        if not isinstance(item, dict):
+            continue
+
+        articles.append(Article(
+            id=str(item.get("id", "")),
+            title=item.get("title", ""),
+            link=item.get("link", ""),
+            pub_date=item.get("pub_date", ""),
+            author=item.get("author", ""),
+            description=item.get("description", ""),
+            board_name=item.get("board_name", ""),
+            board_id=_to_int(item.get("board_id", 0)),
+            view_count=_to_int(item.get("view_count", 0)),
+            is_pinned=bool(item.get("is_pinned", False)),
+            attachment_count=_to_int(item.get("attachment_count", 0)),
+        ))
+
+    return articles, updated_at
+
+
+def is_cache_fresh(updated_at: str | None) -> bool:
+    if not updated_at:
+        return False
+    try:
+        cached = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return False
+
+    elapsed = (datetime.now() - cached).total_seconds()
+    return elapsed <= MAX_CACHE_AGE_SECONDS
 
 
 def keyword_search(query: str, articles: list[Article]) -> list[Article]:
@@ -214,9 +284,18 @@ async def run():
                 continue
 
             if articles is None:
-                print("[검색] RSS 피드 수집 중...")
-                articles = fetch_all_feeds(config)
-                print(f"[검색] {len(articles)}건 수집 완료")
+                cached_articles, cached_at = load_latest_articles()
+                if cached_articles and is_cache_fresh(cached_at):
+                    print(f"[검색] 최신 스크랩 캐시 사용 (갱신: {cached_at})")
+                    articles = cached_articles
+                elif cached_articles:
+                    print(f"[검색] 캐시가 오래됨 ({cached_at}), 스크랩 재실행 중...")
+                    articles = fetch_all_feeds(config)
+                    print(f"[검색] {len(articles)}건 수집 완료")
+                else:
+                    print("[검색] 캐시 없음, 실시간 스크랩 실행 중...")
+                    articles = fetch_all_feeds(config)
+                    print(f"[검색] {len(articles)}건 수집 완료")
 
             print(f"[검색] 쿼리: {query}")
             results, gemini_used = search_articles(query, articles)
