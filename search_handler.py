@@ -261,13 +261,15 @@ async def run():
 
     for update in updates:
         update_id = int(update.update_id)
+
+        # 항상 offset을 전진시켜 다음 실행 시 같은 업데이트를 다시 받지 않도록 함
+        state["last_update_id"] = max(state.get("last_update_id", 0), update_id)
+
         if update_id in processed_update_ids:
             print(f"[검색] 중복 업데이트 스킵: {update_id}")
             continue
 
         try:
-            state["last_update_id"] = update_id
-
             if not update.message or not update.message.text:
                 continue
 
@@ -308,6 +310,10 @@ async def run():
             processed_update_ids.add(update_id)
             state["processed_update_ids"] = list(processed_update_ids)
             save_search_state(state)
+
+    # 루프 종료 후 최종 상태 저장 (스킵된 업데이트의 offset 반영)
+    state["processed_update_ids"] = list(processed_update_ids)
+    save_search_state(state)
 
     print("[검색] 완료")
 
