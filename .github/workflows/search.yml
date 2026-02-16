@@ -1,10 +1,7 @@
 name: 텔레그램 검색 응답
 
 on:
-  schedule:
-    # 5분 간격 실행 (public repo → Actions 무제한)
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 수동 실행만 가능 (스케줄 비활성화)
 
 concurrency:
   group: search-handler
