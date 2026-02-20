@@ -49,7 +49,7 @@ def normalize_link(link: str, base_url: str) -> str:
 def is_empty_feed_item(entry) -> bool:
     """빈 피드의 센티널 값 감지"""
     title = entry.get("title", "")
-    return "No exist data" in title or "no exist data" in title.lower()
+    return "no exist data" in title.lower()
 
 
 def _to_int(value, default=0) -> int:
