@@ -5,6 +5,10 @@ on:
     - cron: '0 1 * * *'  # 매일 오전 10시 KST (UTC+9 → UTC 01:00)
   workflow_dispatch:
 
+concurrency:
+  group: ku-notice-monitor
+  cancel-in-progress: false
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
@@ -24,6 +28,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run monitor
+        id: monitor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -39,3 +44,16 @@ jobs:
           git add state.json
           git diff --staged --quiet || git commit -m "Update state [skip ci]"
           git push
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          import asyncio, os
+          from notifier import notify_error
+          run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          asyncio.run(notify_error(f'GitHub Actions 워크플로우 실패\n로그 확인: {run_url}'))
+          "
