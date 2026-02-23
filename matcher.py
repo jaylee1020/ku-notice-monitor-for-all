@@ -1,12 +1,15 @@
 """Gemini API 기반 공지 관련도 분석 모듈"""
 
 import json
+import logging
 import os
-import time
 
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from google import genai
 
 from feeds import Article
+
+logger = logging.getLogger(__name__)
 
 
 def build_profile_text(config: dict) -> str:
@@ -16,7 +19,7 @@ def build_profile_text(config: dict) -> str:
     high = ", ".join(keywords.get("high", []))
     medium = ", ".join(keywords.get("medium", []))
 
-    lines = []
+    lines: list[str] = []
     if p.get("major"):
         lines.append(f"학과: {p['major']}")
     if p.get("year"):
@@ -59,45 +62,52 @@ def build_prompt(articles: list[Article], profile_text: str) -> str:
 {article_list}"""
 
 
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=16),
+    reraise=True,
+)
+def _call_gemini_api(client: genai.Client, model_name: str, prompt: str) -> list[dict]:
+    """Gemini API 호출 (tenacity로 최대 3회 지수 백오프 재시도)"""
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+    )
+    text = response.text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    return json.loads(text)
+
+
 def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
     """Gemini API로 공지 관련도 분석. 실패 시 빈 리스트 반환."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
+        logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. 키워드 매칭으로 대체됩니다.")
         return []
 
     client = genai.Client(api_key=api_key)
     model_name = config["gemini"]["model"]
-
     profile_text = build_profile_text(config)
     prompt = build_prompt(articles, profile_text)
 
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-            text = response.text.strip()
-            # JSON 블록이 ```json ... ``` 로 감싸져 있을 수 있음
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-            return json.loads(text)
-        except Exception as e:
-            print(f"[Gemini API 오류] 시도 {attempt + 1}/2: {e}")
-            if attempt == 0:
-                print("[재시도] 5초 후 재시도합니다...")
-                time.sleep(5)
-
-    return []
+    try:
+        results = _call_gemini_api(client, model_name, prompt)
+        logger.info("Gemini 분석 완료: %d건", len(results))
+        return results
+    except Exception as e:
+        logger.error("Gemini API 호출 최종 실패 (3회 시도): %s", e)
+        return []
 
 
 def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
     """Gemini 실패 시 키워드 매칭으로 폴백"""
     keywords = config.get("keywords", {})
-    high_keywords = keywords.get("high", [])
-    medium_keywords = keywords.get("medium", [])
+    high_keywords: list[str] = keywords.get("high", [])
+    medium_keywords: list[str] = keywords.get("medium", [])
 
-    results = []
+    results: list[dict] = []
     for i, a in enumerate(articles, 1):
         text = (a.title + " " + a.description).lower()
         score = 1
@@ -128,18 +138,15 @@ def match_articles(articles: list[Article], config: dict) -> list[tuple[Article,
     if not articles:
         return []
 
-    threshold = config["gemini"].get("relevance_threshold", 3)
+    threshold: int = config["gemini"].get("relevance_threshold", 3)
 
-    # Gemini로 분석 시도
     results = analyze_with_gemini(articles, config)
 
-    # 실패 시 키워드 폴백
     if not results:
-        print("[INFO] Gemini 분석 실패, 키워드 매칭으로 대체합니다.")
+        logger.info("Gemini 분석 실패, 키워드 매칭으로 대체합니다.")
         results = keyword_fallback(articles, config)
 
-    # 결과를 Article과 매칭
-    matched = []
+    matched: list[tuple[Article, int, str]] = []
     for r in results:
         idx = r.get("index", 0) - 1
         if 0 <= idx < len(articles):
