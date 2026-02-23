@@ -6,7 +6,6 @@ import os
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from google import genai
-from google.genai.errors import APIError
 
 from feeds import Article
 

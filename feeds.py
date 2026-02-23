@@ -14,7 +14,6 @@ import certifi
 import feedparser
 
 from constants import (
-    ARTICLE_BODY_SNIPPET_LENGTH,
     BOARD_CONTENT_CLASS,
     EMPTY_FEED_SENTINEL,
     MAX_ARTICLE_BODY_LENGTH,
@@ -32,7 +31,6 @@ def _make_ssl_context(ssl_verify: bool) -> ssl.SSLContext:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    logger.warning("SSL 인증서 검증이 비활성화되어 있습니다. config.yaml의 ssl_verify를 true로 설정하면 보안이 강화됩니다.")
     return ctx
 
 
@@ -134,6 +132,8 @@ async def _fetch_feed_async(
 async def fetch_all_feeds(config: dict) -> list[Article]:
     """모든 활성화된 피드에서 게시물을 비동기로 병렬 수집"""
     ssl_verify = config.get("settings", {}).get("ssl_verify", False)
+    if not ssl_verify:
+        logger.warning("SSL 인증서 검증이 비활성화되어 있습니다. config.yaml의 ssl_verify를 true로 설정하면 보안이 강화됩니다.")
     ssl_context = _make_ssl_context(ssl_verify)
 
     async with aiohttp.ClientSession(headers=_DEFAULT_HEADERS) as session:

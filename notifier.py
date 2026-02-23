@@ -83,9 +83,10 @@ async def send_telegram(text: str) -> None:
         return
 
     bot = Bot(token=token)
-    for msg in split_message(text):
+    parts = split_message(text)
+    for msg in parts:
         await bot.send_message(chat_id=chat_id, text=msg)
-    logger.info("텔레그램 메시지 전송 완료 (%d개 분할)", len(split_message(text)))
+    logger.info("텔레그램 메시지 전송 완료 (%d개 분할)", len(parts))
 
 
 async def notify_relevant(
