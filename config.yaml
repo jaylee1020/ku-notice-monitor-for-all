@@ -45,7 +45,7 @@ feeds:
 
 # === Gemini 설정 ===
 gemini:
-  model: "gemini-2.0-flash-latest"
+  model: "gemini-flash-latest"
   relevance_threshold: 3      # 1-5 점수 중 이 점수 이상이면 관련 공지로 분류
 
 # === 설정 ===
