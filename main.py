@@ -24,19 +24,34 @@ def setup_logging() -> None:
     )
 
 
+def _load_json_env(var_name: str, fallback: dict) -> dict:
+    """JSON 환경변수를 안전하게 로드하고, 파싱 실패 시 fallback 반환"""
+    logger = logging.getLogger(__name__)
+    raw = os.environ.get(var_name, "")
+    if not raw:
+        return fallback
+
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.warning("%s 파싱 실패: %s. config.yaml 기본값을 사용합니다.", var_name, e)
+        return fallback
+
+    if not isinstance(value, dict):
+        logger.warning("%s는 JSON 객체여야 합니다. config.yaml 기본값을 사용합니다.", var_name)
+        return fallback
+
+    return value
+
+
 def load_config() -> dict:
     """config.yaml 로드 후 환경변수로 개인정보 오버라이드"""
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    profile_json = os.environ.get("PROFILE_JSON", "")
-    if profile_json:
-        config["profile"] = json.loads(profile_json)
-
-    keywords_json = os.environ.get("KEYWORDS_JSON", "")
-    if keywords_json:
-        config["keywords"] = json.loads(keywords_json)
+    config["profile"] = _load_json_env("PROFILE_JSON", config.get("profile", {}))
+    config["keywords"] = _load_json_env("KEYWORDS_JSON", config.get("keywords", {}))
 
     return config
 
