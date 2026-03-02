@@ -3,8 +3,10 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import ssl
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,8 +16,10 @@ import certifi
 import feedparser
 
 from constants import (
+    ARTICLE_BODY_TIMEOUT,
     BOARD_CONTENT_CLASS,
     EMPTY_FEED_SENTINEL,
+    FEED_FETCH_TIMEOUT,
     MAX_ARTICLE_BODY_LENGTH,
     STATE_RETENTION_DAYS,
 )
@@ -96,7 +100,7 @@ async def _fetch_feed_async(
     url = config["settings"]["rss_url_template"].format(board_id=board_id)
 
     try:
-        async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=FEED_FETCH_TIMEOUT)) as resp:
             xml_data = await resp.read()
         feed = feedparser.parse(xml_data)
     except Exception as e:
@@ -133,7 +137,7 @@ async def fetch_all_feeds(config: dict) -> list[Article]:
     """모든 활성화된 피드에서 게시물을 비동기로 병렬 수집"""
     ssl_verify = config.get("settings", {}).get("ssl_verify", False)
     if not ssl_verify:
-        logger.warning("SSL 인증서 검증이 비활성화되어 있습니다. config.yaml의 ssl_verify를 true로 설정하면 보안이 강화됩니다.")
+        logger.warning("SSL 인증서 검증 비활성화 상태. ssl_verify: true로 변경하면 보안이 강화됩니다.")
     ssl_context = _make_ssl_context(ssl_verify)
 
     async with aiohttp.ClientSession(headers=_DEFAULT_HEADERS) as session:
@@ -164,7 +168,7 @@ def load_state(state_path: str) -> dict:
 
 
 def save_state(state: dict, state_path: str) -> None:
-    """state.json 저장 + 90일 지난 ID 자동 정리"""
+    """state.json 저장 + 90일 지난 ID 자동 정리 (원자적 쓰기)"""
     cutoff = (datetime.now() - timedelta(days=STATE_RETENTION_DAYS)).isoformat()
     state["seen_ids"] = {
         k: v for k, v in state["seen_ids"].items()
@@ -172,8 +176,16 @@ def save_state(state: dict, state_path: str) -> None:
     }
     state["last_run"] = datetime.now().isoformat()
 
-    with open(state_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    target = Path(state_path)
+    fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, state_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
     logger.debug("상태 저장 완료: %s", state_path)
 
 
@@ -192,7 +204,7 @@ async def _fetch_article_body_async(
     from bs4 import BeautifulSoup
 
     try:
-        async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=ARTICLE_BODY_TIMEOUT)) as resp:
             html = await resp.text(encoding="utf-8", errors="replace")
 
         soup = BeautifulSoup(html, "lxml")
@@ -237,3 +249,27 @@ def mark_as_seen(articles: list[Article], state: dict) -> None:
     now = datetime.now().isoformat()
     for a in articles:
         state["seen_ids"][a.id] = now
+
+
+async def check_ssl_health(config: dict) -> bool:
+    """건국대 SSL 인증서 상태를 점검하고 결과를 로그로 기록"""
+    base_url = config.get("settings", {}).get("base_url", "")
+    if not base_url:
+        return False
+
+    ssl_context = _make_ssl_context(ssl_verify=True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                base_url,
+                ssl=ssl_context,
+                timeout=aiohttp.ClientTimeout(total=FEED_FETCH_TIMEOUT),
+            ) as resp:
+                logger.info(
+                    "SSL 인증서 점검 성공 (status=%d). ssl_verify: true로 전환을 권장합니다.",
+                    resp.status,
+                )
+                return True
+    except Exception as e:
+        logger.info("SSL 인증서 점검 실패 (현재 설정 유지): %s", e)
+        return False

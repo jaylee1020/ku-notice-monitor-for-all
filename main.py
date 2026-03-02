@@ -5,13 +5,22 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-from feeds import fetch_all_feeds, filter_new_articles, load_state, save_state, mark_as_seen, enrich_articles_with_body
+from feeds import (
+    check_ssl_health,
+    enrich_articles_with_body,
+    fetch_all_feeds,
+    filter_new_articles,
+    load_state,
+    mark_as_seen,
+    save_state,
+)
 from matcher import match_articles
-from notifier import notify_relevant, notify_no_new, notify_no_relevant, notify_error
+from notifier import notify_error, notify_no_new, notify_no_relevant, notify_relevant
 
 
 def setup_logging() -> None:
@@ -57,13 +66,25 @@ def load_config() -> dict:
 
 
 def validate_config(config: dict) -> None:
-    """필수 설정 값 유효성 검사. 문제 발견 시 경고 로그 출력."""
+    """필수 설정 값 유효성 검사. 구조 오류 시 ValueError, 권장사항은 경고 로그."""
     logger = logging.getLogger(__name__)
 
     required_sections = ["profile", "keywords", "feeds", "gemini", "settings"]
     for section in required_sections:
         if section not in config:
             raise ValueError(f"config.yaml에 필수 섹션 '{section}'이 없습니다.")
+
+    for feed_name, feed_config in config["feeds"].items():
+        if "id" not in feed_config:
+            raise ValueError(f"피드 '{feed_name}'에 필수 필드 'id'가 없습니다.")
+
+    if "model" not in config.get("gemini", {}):
+        raise ValueError("gemini 섹션에 필수 필드 'model'이 없습니다.")
+
+    required_settings = ["state_file", "base_url", "rss_url_template"]
+    for field in required_settings:
+        if field not in config.get("settings", {}):
+            raise ValueError(f"settings 섹션에 필수 필드 '{field}'가 없습니다.")
 
     if not os.environ.get("GEMINI_API_KEY"):
         logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. 키워드 매칭으로 대체됩니다.")
@@ -79,9 +100,31 @@ def validate_config(config: dict) -> None:
         logger.warning("활성화된 RSS 피드가 없습니다. config.yaml의 feeds 설정을 확인하세요.")
 
 
+def _log_run_summary(stats: dict) -> None:
+    """실행 결과 요약을 로그로 출력"""
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 매칭 %d건, 분석: %s",
+        stats["feeds_collected"],
+        stats["articles_found"],
+        stats["new_articles"],
+        stats["matched_articles"],
+        stats["method"],
+    )
+
+
 async def run() -> None:
     logger = logging.getLogger(__name__)
     logger.info("=== 건국대 공지 모니터링 시작 ===")
+
+    stats = {
+        "timestamp": datetime.now().isoformat(),
+        "feeds_collected": 0,
+        "articles_found": 0,
+        "new_articles": 0,
+        "matched_articles": 0,
+        "method": "none",
+    }
 
     config = load_config()
     validate_config(config)
@@ -90,25 +133,37 @@ async def run() -> None:
     state = load_state(str(state_path))
     logger.info("기존 확인 공지: %d건", len(state.get("seen_ids", {})))
 
+    ssl_verify = config.get("settings", {}).get("ssl_verify", False)
+    if not ssl_verify:
+        await check_ssl_health(config)
+
     logger.info("RSS 피드 수집 중...")
     all_articles = await fetch_all_feeds(config)
+    enabled_feeds = [n for n, fc in config["feeds"].items() if fc.get("enabled", True)]
+    stats["feeds_collected"] = len(enabled_feeds)
+    stats["articles_found"] = len(all_articles)
     logger.info("총 %d건 수집", len(all_articles))
 
     new_articles = filter_new_articles(all_articles, state)
+    stats["new_articles"] = len(new_articles)
     logger.info("새 공지: %d건", len(new_articles))
 
     if not new_articles:
         logger.info("새로운 공지가 없습니다.")
         await notify_no_new()
         mark_as_seen(all_articles, state)
+        state["last_run_stats"] = stats
         save_state(state, str(state_path))
+        _log_run_summary(stats)
         return
 
     logger.info("새 공지 본문 수집 중... (%d건)", len(new_articles))
     await enrich_articles_with_body(new_articles, config)
 
     logger.info("Gemini로 관련도 분석 중...")
-    matched = match_articles(new_articles, config)
+    matched, method = match_articles(new_articles, config)
+    stats["matched_articles"] = len(matched)
+    stats["method"] = method
     logger.info("관련 공지: %d건", len(matched))
 
     if matched:
@@ -121,8 +176,10 @@ async def run() -> None:
         logger.info("전송 완료")
 
     mark_as_seen(all_articles, state)
+    state["last_run_stats"] = stats
     save_state(state, str(state_path))
     logger.info("상태 저장 완료 (총 %d건 기록)", len(state["seen_ids"]))
+    _log_run_summary(stats)
     logger.info("=== 완료 ===")
 
 

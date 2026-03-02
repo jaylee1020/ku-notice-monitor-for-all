@@ -4,8 +4,8 @@ import json
 import logging
 import os
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from google import genai
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from feeds import Article
 
@@ -130,21 +130,25 @@ def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
     return results
 
 
-def match_articles(articles: list[Article], config: dict) -> list[tuple[Article, int, str]]:
+def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Article, int, str]], str]:
     """
-    공지 관련도 분석 후 (Article, score, reason) 튜플 리스트 반환.
+    공지 관련도 분석 후 (Article, score, reason) 튜플 리스트와 분석 방법을 반환.
     threshold 이상인 공지만 포함, 점수 높은 순 정렬.
+    반환: (matched_list, method) - method는 "gemini", "keyword", 또는 "none"
     """
     if not articles:
-        return []
+        return [], "none"
 
     threshold: int = config["gemini"].get("relevance_threshold", 3)
 
     results = analyze_with_gemini(articles, config)
 
-    if not results:
+    if results:
+        method = "gemini"
+    else:
         logger.info("Gemini 분석 실패, 키워드 매칭으로 대체합니다.")
         results = keyword_fallback(articles, config)
+        method = "keyword"
 
     matched: list[tuple[Article, int, str]] = []
     for r in results:
@@ -156,4 +160,4 @@ def match_articles(articles: list[Article], config: dict) -> list[tuple[Article,
                 matched.append((articles[idx], score, reason))
 
     matched.sort(key=lambda x: x[1], reverse=True)
-    return matched
+    return matched, method
