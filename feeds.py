@@ -92,12 +92,13 @@ async def _fetch_feed_async(
     session: aiohttp.ClientSession,
     board_name: str,
     board_id: int,
+    feed_config: dict,
     config: dict,
     ssl_context: ssl.SSLContext,
 ) -> list[Article]:
     """단일 RSS 피드를 비동기로 수집하고 Article 리스트로 반환"""
     base_url = config["settings"]["base_url"]
-    url = config["settings"]["rss_url_template"].format(board_id=board_id)
+    url = feed_config.get("rss_url") or config["settings"]["rss_url_template"].format(board_id=board_id)
 
     try:
         async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=FEED_FETCH_TIMEOUT)) as resp:
@@ -142,7 +143,7 @@ async def fetch_all_feeds(config: dict) -> list[Article]:
 
     async with aiohttp.ClientSession(headers=_DEFAULT_HEADERS) as session:
         tasks = [
-            _fetch_feed_async(session, board_name, feed_config["id"], config, ssl_context)
+            _fetch_feed_async(session, board_name, feed_config["id"], feed_config, config, ssl_context)
             for board_name, feed_config in config["feeds"].items()
             if feed_config.get("enabled", True)
         ]

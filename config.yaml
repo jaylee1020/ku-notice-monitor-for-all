@@ -42,6 +42,16 @@ feeds:
   일반공지:
     id: 240
     enabled: true
+  채용공지:
+    id: 243
+    enabled: true
+  학사서식공지:
+    id: 247
+    enabled: true
+  대학일자리플러스:
+    id: 4083
+    enabled: true
+    rss_url: "https://kuinc.konkuk.ac.kr/bbs/job/4083/rssList.do"
 
 # === Gemini 설정 ===
 gemini:
