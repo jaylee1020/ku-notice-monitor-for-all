@@ -130,3 +130,18 @@ def test_match_articles_gemini_string_score_and_invalid_entries():
     assert method == "gemini"
     assert len(matched) == 1
     assert matched[0][1] == 5
+
+
+def test_match_articles_gemini_invalid_results_fallback_to_keyword():
+    articles = [_make_article(title="장학금 안내")]
+    config = {
+        "gemini": {"model": "test", "relevance_threshold": 3},
+        "profile": {},
+        "keywords": {"high": ["장학"], "medium": []},
+    }
+    mock_results = [{"index": "x", "score": "bad", "reason": "형식 오류"}]
+    with patch("matcher.analyze_with_gemini", return_value=mock_results):
+        matched, method = match_articles(articles, config)
+
+    assert method == "keyword"
+    assert len(matched) == 1

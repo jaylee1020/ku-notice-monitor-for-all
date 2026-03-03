@@ -192,3 +192,12 @@ def test_save_state_no_tmp_left(tmp_path):
     save_state(state, path)
     tmp_files = list(tmp_path.glob("*.tmp"))
     assert len(tmp_files) == 0
+
+
+def test_filter_new_articles_migrates_legacy_id_key():
+    articles = [_make_article(id="1", board_id=243)]
+    state = {"seen_ids": {"1": "2026-01-01T00:00:00"}}
+    result = filter_new_articles(articles, state)
+    assert result == []
+    assert "243:1" in state["seen_ids"]
+    assert "1" not in state["seen_ids"]

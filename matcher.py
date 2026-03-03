@@ -169,6 +169,7 @@ def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Ar
         method = "keyword"
 
     matched: list[tuple[Article, int, str]] = []
+    valid_result_count = 0
     for r in results:
         idx_raw = _parse_index(r.get("index"))
         score = _parse_score(r.get("score"))
@@ -176,10 +177,27 @@ def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Ar
             logger.debug("잘못된 Gemini 결과를 건너뜁니다: %s", r)
             continue
 
+        valid_result_count += 1
         idx = idx_raw - 1
         if 0 <= idx < len(articles) and score >= threshold:
             reason = str(r.get("reason", ""))
             matched.append((articles[idx], score, reason))
+
+    # Gemini 응답이 있었지만 유효 결과가 하나도 없으면 키워드 매칭으로 재시도
+    if method == "gemini" and valid_result_count == 0:
+        logger.info("Gemini 결과 형식이 유효하지 않아 키워드 매칭으로 대체합니다.")
+        fallback_results = keyword_fallback(articles, config)
+        method = "keyword"
+        matched = []
+        for r in fallback_results:
+            idx_raw = _parse_index(r.get("index"))
+            score = _parse_score(r.get("score"))
+            if idx_raw is None or score is None:
+                continue
+            idx = idx_raw - 1
+            if 0 <= idx < len(articles) and score >= threshold:
+                reason = str(r.get("reason", ""))
+                matched.append((articles[idx], score, reason))
 
     matched.sort(key=lambda x: x[1], reverse=True)
     return matched, method

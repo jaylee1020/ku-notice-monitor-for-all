@@ -194,6 +194,12 @@ def load_state(state_path: str) -> dict:
     if not isinstance(state["seen_ids"], dict):
         state["seen_ids"] = {}
 
+    normalized_seen: dict[str, str] = {}
+    for k, v in state["seen_ids"].items():
+        if isinstance(v, str):
+            normalized_seen[str(k)] = v
+    state["seen_ids"] = normalized_seen
+
     return state
 
 
@@ -201,8 +207,8 @@ def save_state(state: dict, state_path: str) -> None:
     """state.json 저장 + 90일 지난 ID 자동 정리 (원자적 쓰기)"""
     cutoff = (datetime.now() - timedelta(days=STATE_RETENTION_DAYS)).isoformat()
     state["seen_ids"] = {
-        k: v for k, v in state["seen_ids"].items()
-        if v > cutoff
+        str(k): v for k, v in state["seen_ids"].items()
+        if isinstance(v, str) and v > cutoff
     }
     state["last_run"] = datetime.now().isoformat()
 
@@ -222,7 +228,25 @@ def save_state(state: dict, state_path: str) -> None:
 def filter_new_articles(articles: list[Article], state: dict) -> list[Article]:
     """이미 확인한 공지를 제외하고 새 공지만 반환"""
     seen = state.get("seen_ids", {})
-    return [a for a in articles if _article_key(a) not in seen]
+    new_articles: list[Article] = []
+
+    for article in articles:
+        key = _article_key(article)
+
+        # 신규 포맷 키가 이미 있으면 스킵
+        if key in seen:
+            continue
+
+        # 구형 포맷(id 단독) 키를 발견하면 즉시 신규 포맷으로 마이그레이션
+        # 이후 보드 간 ID 충돌 영향을 줄이기 위해 구형 키는 제거
+        if article.id in seen:
+            seen[key] = seen[article.id]
+            seen.pop(article.id, None)
+            continue
+
+        new_articles.append(article)
+
+    return new_articles
 
 
 async def _fetch_article_body_async(
