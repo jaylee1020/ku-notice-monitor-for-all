@@ -88,6 +88,13 @@ def _to_int(value, default: int = 0) -> int:
         return default
 
 
+def _article_key(article: Article) -> str:
+    """보드 간 ID 충돌 방지를 위한 고유 키"""
+    return f"{article.board_id}:{article.id}"
+
+
+
+
 async def _fetch_feed_async(
     session: aiohttp.ClientSession,
     board_name: str,
@@ -102,7 +109,13 @@ async def _fetch_feed_async(
 
     try:
         async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=FEED_FETCH_TIMEOUT)) as resp:
+            resp.raise_for_status()
             xml_data = await resp.read()
+
+        if b"<rss" not in xml_data.lower():
+            logger.warning("RSS 형식이 아닌 응답 - %s (board_id=%d, url=%s)", board_name, board_id, url)
+            return []
+
         feed = feedparser.parse(xml_data)
     except Exception as e:
         logger.error("피드 수집 실패 - %s (board_id=%d): %s", board_name, board_id, e)
@@ -160,12 +173,28 @@ async def fetch_all_feeds(config: dict) -> list[Article]:
 
 
 def load_state(state_path: str) -> dict:
-    """state.json 로드. 없으면 초기 상태 반환"""
+    """state.json 로드. 없거나 손상되면 초기 상태 반환"""
     path = Path(state_path)
-    if path.exists():
+    if not path.exists():
+        return {"seen_ids": {}, "last_run": None}
+
+    try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"seen_ids": {}, "last_run": None}
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("state 파일 로드 실패, 초기 상태로 복구합니다: %s", e)
+        return {"seen_ids": {}, "last_run": None}
+
+    if not isinstance(state, dict):
+        logger.warning("state 파일 형식 오류(객체 아님). 초기 상태로 복구합니다.")
+        return {"seen_ids": {}, "last_run": None}
+
+    state.setdefault("seen_ids", {})
+    state.setdefault("last_run", None)
+    if not isinstance(state["seen_ids"], dict):
+        state["seen_ids"] = {}
+
+    return state
 
 
 def save_state(state: dict, state_path: str) -> None:
@@ -193,7 +222,7 @@ def save_state(state: dict, state_path: str) -> None:
 def filter_new_articles(articles: list[Article], state: dict) -> list[Article]:
     """이미 확인한 공지를 제외하고 새 공지만 반환"""
     seen = state.get("seen_ids", {})
-    return [a for a in articles if a.id not in seen]
+    return [a for a in articles if _article_key(a) not in seen]
 
 
 async def _fetch_article_body_async(
@@ -206,6 +235,7 @@ async def _fetch_article_body_async(
 
     try:
         async with session.get(url, ssl=ssl_context, timeout=aiohttp.ClientTimeout(total=ARTICLE_BODY_TIMEOUT)) as resp:
+            resp.raise_for_status()
             html = await resp.text(encoding="utf-8", errors="replace")
 
         soup = BeautifulSoup(html, "lxml")
@@ -249,7 +279,7 @@ def mark_as_seen(articles: list[Article], state: dict) -> None:
     """공지 ID를 state에 기록"""
     now = datetime.now().isoformat()
     for a in articles:
-        state["seen_ids"][a.id] = now
+        state["seen_ids"][_article_key(a)] = now
 
 
 async def check_ssl_health(config: dict) -> bool:

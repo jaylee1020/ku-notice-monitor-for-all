@@ -12,6 +12,24 @@ from feeds import Article
 logger = logging.getLogger(__name__)
 
 
+def _parse_index(value: object) -> int | None:
+    try:
+        idx = int(value)
+    except (TypeError, ValueError):
+        return None
+    return idx if idx >= 1 else None
+
+
+def _parse_score(value: object) -> int | None:
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= score <= 5:
+        return score
+    return None
+
+
 def build_profile_text(config: dict) -> str:
     """config에서 사용자 프로필 텍스트 생성"""
     p = config["profile"]
@@ -152,12 +170,16 @@ def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Ar
 
     matched: list[tuple[Article, int, str]] = []
     for r in results:
-        idx = r.get("index", 0) - 1
-        if 0 <= idx < len(articles):
-            score = r.get("score", 1)
-            reason = r.get("reason", "")
-            if score >= threshold:
-                matched.append((articles[idx], score, reason))
+        idx_raw = _parse_index(r.get("index"))
+        score = _parse_score(r.get("score"))
+        if idx_raw is None or score is None:
+            logger.debug("잘못된 Gemini 결과를 건너뜁니다: %s", r)
+            continue
+
+        idx = idx_raw - 1
+        if 0 <= idx < len(articles) and score >= threshold:
+            reason = str(r.get("reason", ""))
+            matched.append((articles[idx], score, reason))
 
     matched.sort(key=lambda x: x[1], reverse=True)
     return matched, method

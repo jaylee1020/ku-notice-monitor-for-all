@@ -114,3 +114,19 @@ def test_match_articles_empty():
     matched, method = match_articles([], {"gemini": {"relevance_threshold": 3}})
     assert matched == []
     assert method == "none"
+
+
+def test_match_articles_gemini_string_score_and_invalid_entries():
+    articles = [_make_article(title="장학금")]
+    config = {"gemini": {"model": "test", "relevance_threshold": 3}, "profile": {}, "keywords": {}}
+    mock_results = [
+        {"index": "1", "score": "5", "reason": "문자열 점수"},
+        {"index": "x", "score": 5, "reason": "잘못된 index"},
+        {"index": 1, "score": "bad", "reason": "잘못된 score"},
+    ]
+    with patch("matcher.analyze_with_gemini", return_value=mock_results):
+        matched, method = match_articles(articles, config)
+
+    assert method == "gemini"
+    assert len(matched) == 1
+    assert matched[0][1] == 5

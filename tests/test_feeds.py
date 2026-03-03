@@ -117,7 +117,7 @@ def test_to_int_custom_default():
 
 def test_filter_new_articles_filters_seen():
     articles = [_make_article(id="1"), _make_article(id="2"), _make_article(id="3")]
-    state = {"seen_ids": {"1": "2026-01-01T00:00:00", "3": "2026-01-01T00:00:00"}}
+    state = {"seen_ids": {"234:1": "2026-01-01T00:00:00", "234:3": "2026-01-01T00:00:00"}}
     result = filter_new_articles(articles, state)
     assert len(result) == 1
     assert result[0].id == "2"
@@ -136,8 +136,8 @@ def test_mark_as_seen():
     articles = [_make_article(id="10"), _make_article(id="20")]
     state = {"seen_ids": {}}
     mark_as_seen(articles, state)
-    assert "10" in state["seen_ids"]
-    assert "20" in state["seen_ids"]
+    assert "234:10" in state["seen_ids"]
+    assert "234:20" in state["seen_ids"]
 
 
 # --- load_state ---
@@ -153,6 +153,13 @@ def test_load_state_existing_file(tmp_path):
     path.write_text('{"seen_ids": {"1": "2026-01-01"}, "last_run": "2026-01-01"}')
     result = load_state(str(path))
     assert "1" in result["seen_ids"]
+
+
+def test_load_state_corrupted_file_returns_default(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text('{"seen_ids":', encoding="utf-8")
+    result = load_state(str(path))
+    assert result == {"seen_ids": {}, "last_run": None}
 
 
 # --- save_state ---

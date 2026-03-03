@@ -52,20 +52,34 @@ def build_error_message(error_detail: str) -> str:
 
 def split_message(text: str) -> list[str]:
     """텔레그램 메시지 길이 제한에 맞게 분할"""
-    if len(text) <= MAX_TELEGRAM_MESSAGE_LENGTH:
+    limit = MAX_TELEGRAM_MESSAGE_LENGTH
+    if len(text) <= limit:
         return [text]
 
     messages: list[str] = []
     current = ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > MAX_TELEGRAM_MESSAGE_LENGTH:
+
+    for raw_line in text.split("\n"):
+        line = raw_line
+
+        while len(line) > limit:
             if current:
                 messages.append(current)
-            current = line[:MAX_TELEGRAM_MESSAGE_LENGTH]
+                current = ""
+            messages.append(line[:limit])
+            line = line[limit:]
+
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            if current:
+                messages.append(current)
+            current = line
         else:
-            current = current + "\n" + line if current else line
+            current = candidate
+
     if current:
         messages.append(current)
+
     return messages
 
 

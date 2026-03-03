@@ -84,3 +84,10 @@ def test_split_message_long():
     assert len(parts) >= 2
     for part in parts:
         assert len(part) <= MAX_TELEGRAM_MESSAGE_LENGTH
+
+
+def test_split_message_long_single_line_no_loss():
+    text = "x" * (MAX_TELEGRAM_MESSAGE_LENGTH * 2 + 123)
+    parts = split_message(text)
+    assert "".join(parts) == text
+    assert all(len(part) <= MAX_TELEGRAM_MESSAGE_LENGTH for part in parts)
