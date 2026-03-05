@@ -117,7 +117,12 @@ def parse_profile_text(text: str) -> dict:
 
 
 def _has_profile_data(profile: dict) -> bool:
-    return bool(profile.get("major") or profile.get("campus") or profile.get("status") or int(profile.get("year", 0)) > 0)
+    return bool(
+        profile.get("major")
+        or profile.get("campus")
+        or profile.get("status")
+        or int(profile.get("year", 0)) > 0
+    )
 
 
 def _help_text() -> str:

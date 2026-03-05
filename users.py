@@ -65,14 +65,23 @@ def _normalize_profile(value: object) -> dict:
 
 
 def _has_profile_data(profile: dict) -> bool:
-    return bool(profile.get("major") or profile.get("campus") or profile.get("status") or int(profile.get("year", 0)) > 0)
+    return bool(
+        profile.get("major")
+        or profile.get("campus")
+        or profile.get("status")
+        or int(profile.get("year", 0)) > 0
+    )
 
 
 def _normalize_user_record(chat_id: str, value: object, is_admin: bool = False) -> dict:
     if not isinstance(value, dict):
         return _new_user_record(chat_id, allowed=False, is_admin=is_admin)
 
-    base = _new_user_record(chat_id, allowed=bool(value.get("allowed", False)), is_admin=is_admin or bool(value.get("is_admin", False)))
+    base = _new_user_record(
+        chat_id,
+        allowed=bool(value.get("allowed", False)),
+        is_admin=is_admin or bool(value.get("is_admin", False)),
+    )
     base["active"] = bool(value.get("active", base["active"]))
 
     level = str(value.get("filter_level", DEFAULT_FILTER_LEVEL)).lower()
@@ -128,7 +137,8 @@ def load_users(path: str, admin_chat_id: str = "") -> dict:
                     normalized: dict[str, dict] = {}
                     for chat_id, value in users.items():
                         cid = _normalize_chat_id(chat_id)
-                        normalized[cid] = _normalize_user_record(cid, value, is_admin=(admin_id != "" and cid == admin_id))
+                        is_admin = admin_id != "" and cid == admin_id
+                        normalized[cid] = _normalize_user_record(cid, value, is_admin=is_admin)
                     state["users"] = normalized
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("users 파일 로드 실패, 초기 상태로 복구합니다: %s", e)
@@ -188,7 +198,11 @@ def set_allow(
         return False, "관리자 계정은 차단할 수 없습니다."
 
     if allowed and not user.get("allowed", False):
-        allowed_count = sum(1 for u in users_state.get("users", {}).values() if isinstance(u, dict) and u.get("allowed", False))
+        allowed_count = sum(
+            1
+            for u in users_state.get("users", {}).values()
+            if isinstance(u, dict) and u.get("allowed", False)
+        )
         if max_users > 0 and allowed_count >= max_users:
             return False, f"허용 인원 제한({max_users}명)으로 승인할 수 없습니다."
 

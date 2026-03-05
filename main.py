@@ -122,7 +122,8 @@ def _log_run_summary(stats: dict) -> None:
     """실행 결과 요약을 로그로 출력"""
     logger = logging.getLogger(__name__)
     logger.info(
-        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 사용자 %d명, 응답 %d건, 알림 %d건, Gemini호출 %d건, 강제키워드그룹 %d건, 분석: %s",
+        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 사용자 %d명, 응답 %d건, 알림 %d건, "
+        "Gemini호출 %d건, 강제키워드그룹 %d건, 분석: %s",
         stats["feeds_collected"],
         stats["articles_found"],
         stats["new_articles"],
@@ -136,7 +137,12 @@ def _log_run_summary(stats: dict) -> None:
 
 
 def _has_profile_data(profile: dict) -> bool:
-    return bool(profile.get("major") or profile.get("campus") or profile.get("status") or int(profile.get("year", 0)) > 0)
+    return bool(
+        profile.get("major")
+        or profile.get("campus")
+        or profile.get("status")
+        or int(profile.get("year", 0)) > 0
+    )
 
 
 def _filter_level_to_threshold(level: str) -> int:
@@ -345,7 +351,11 @@ async def run() -> None:
     state["last_run_stats"] = stats
     save_state(state, str(state_path))
     save_users(users_state, str(users_path))
-    logger.info("상태 저장 완료 (공지: %d건, 사용자: %d명)", len(state.get("seen_ids", {})), len(users_state.get("users", {})))
+    logger.info(
+        "상태 저장 완료 (공지: %d건, 사용자: %d명)",
+        len(state.get("seen_ids", {})),
+        len(users_state.get("users", {})),
+    )
     _log_run_summary(stats)
     logger.info("=== 완료 ===")
 
