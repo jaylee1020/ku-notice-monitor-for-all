@@ -7,11 +7,23 @@ import logging
 import os
 
 from google import genai
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from feeds import Article
 
 logger = logging.getLogger(__name__)
+
+
+def _is_quota_or_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    signals = [
+        "429",
+        "quota",
+        "rate limit",
+        "too many requests",
+        "resource_exhausted",
+    ]
+    return any(sig in text for sig in signals)
 
 
 def _parse_index(value: object) -> int | None:
@@ -83,7 +95,7 @@ def build_prompt(articles: list[Article], profile_text: str) -> str:
 
 
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception(lambda e: not _is_quota_or_rate_limit_error(e)),
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=16),
     reraise=True,
@@ -117,6 +129,8 @@ def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
         logger.info("Gemini 분석 완료: %d건", len(results))
         return results
     except Exception as e:
+        if _is_quota_or_rate_limit_error(e):
+            logger.warning("Gemini 쿼터/레이트리밋 제한 감지: %s", e)
         logger.error("Gemini API 호출 최종 실패 (3회 시도): %s", e)
         return []
 
@@ -150,7 +164,11 @@ def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
     return results
 
 
-def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Article, int, str]], str]:
+def match_articles(
+    articles: list[Article],
+    config: dict,
+    force_method: str | None = None,
+) -> tuple[list[tuple[Article, int, str]], str]:
     """
     공지 관련도 분석 후 (Article, score, reason) 튜플 리스트와 분석 방법을 반환.
     threshold 이상인 공지만 포함, 점수 높은 순 정렬.
@@ -161,14 +179,18 @@ def match_articles(articles: list[Article], config: dict) -> tuple[list[tuple[Ar
 
     threshold: int = config["gemini"].get("relevance_threshold", 3)
 
-    results = analyze_with_gemini(articles, config)
-
-    if results:
-        method = "gemini"
-    else:
-        logger.info("Gemini 분석 실패, 키워드 매칭으로 대체합니다.")
+    forced = (force_method or "").strip().lower()
+    if forced == "keyword":
         results = keyword_fallback(articles, config)
         method = "keyword"
+    else:
+        results = analyze_with_gemini(articles, config)
+        if results:
+            method = "gemini"
+        else:
+            logger.info("Gemini 분석 실패, 키워드 매칭으로 대체합니다.")
+            results = keyword_fallback(articles, config)
+            method = "keyword"
 
     matched: list[tuple[Article, int, str]] = []
     valid_result_count = 0

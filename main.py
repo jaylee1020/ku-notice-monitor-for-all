@@ -8,6 +8,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 
 import yaml
 
@@ -72,6 +73,12 @@ def load_config() -> dict:
 
     config["profile"] = _load_json_env("PROFILE_JSON", config.get("profile", {}))
     config["keywords"] = _load_json_env("KEYWORDS_JSON", config.get("keywords", {}))
+    config.setdefault("gemini", {})
+    max_calls = int(config["gemini"].get("max_calls_per_run", 120) or 120)
+    min_interval = float(config["gemini"].get("min_call_interval_sec", 4.2) or 4.2)
+    config["gemini"]["max_calls_per_run"] = max(0, max_calls)
+    config["gemini"]["min_call_interval_sec"] = max(0.0, min_interval)
+    config["gemini"]["disable_after_fallback"] = bool(config["gemini"].get("disable_after_fallback", True))
     config.setdefault("settings", {})
     config["settings"]["admin_chat_id"] = _resolve_admin_chat_id(config["settings"].get("admin_chat_id", ""))
     config["settings"]["users_file"] = config["settings"].get("users_file", "users.json")
@@ -115,13 +122,15 @@ def _log_run_summary(stats: dict) -> None:
     """실행 결과 요약을 로그로 출력"""
     logger = logging.getLogger(__name__)
     logger.info(
-        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 사용자 %d명, 응답 %d건, 알림 %d건, 분석: %s",
+        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 사용자 %d명, 응답 %d건, 알림 %d건, Gemini호출 %d건, 강제키워드그룹 %d건, 분석: %s",
         stats["feeds_collected"],
         stats["articles_found"],
         stats["new_articles"],
         stats["active_users"],
         stats["command_responses"],
         stats["notifications_sent"],
+        stats["gemini_calls_used"],
+        stats["keyword_forced_groups"],
         stats["method"],
     )
 
@@ -215,6 +224,8 @@ async def run() -> None:
         "active_users": 0,
         "command_responses": 0,
         "notifications_sent": 0,
+        "gemini_calls_used": 0,
+        "keyword_forced_groups": 0,
     }
 
     config = load_config()
@@ -276,6 +287,13 @@ async def run() -> None:
 
     cache: dict[tuple[str, int], tuple[list[tuple], str]] = {}
     methods: set[str] = set()
+    gemini_calls_used = 0
+    last_gemini_call_at = 0.0
+    gemini_cfg = config.get("gemini", {})
+    max_calls_per_run = int(gemini_cfg.get("max_calls_per_run", 120) or 120)
+    min_call_interval_sec = float(gemini_cfg.get("min_call_interval_sec", 4.2) or 4.2)
+    disable_after_fallback = bool(gemini_cfg.get("disable_after_fallback", True))
+    gemini_enabled = bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
     for user in recipients:
         chat_id = user["chat_id"]
@@ -292,7 +310,21 @@ async def run() -> None:
 
         if cache_key not in cache:
             user_config = _build_user_match_config(config, user, threshold)
-            matched, method = match_articles(new_articles, user_config)
+            force_keyword = (not gemini_enabled) or (max_calls_per_run > 0 and gemini_calls_used >= max_calls_per_run)
+            if force_keyword:
+                matched, method = match_articles(new_articles, user_config, force_method="keyword")
+                stats["keyword_forced_groups"] += 1
+            else:
+                if gemini_calls_used > 0 and min_call_interval_sec > 0:
+                    elapsed = monotonic() - last_gemini_call_at
+                    wait_sec = min_call_interval_sec - elapsed
+                    if wait_sec > 0:
+                        await asyncio.sleep(wait_sec)
+                matched, method = match_articles(new_articles, user_config)
+                gemini_calls_used += 1
+                last_gemini_call_at = monotonic()
+                if method != "gemini" and disable_after_fallback:
+                    gemini_enabled = False
             cache[cache_key] = (matched, method)
         else:
             matched, method = cache[cache_key]
@@ -305,6 +337,7 @@ async def run() -> None:
             await notify_no_relevant(len(new_articles), chat_id=chat_id)
         stats["notifications_sent"] += 1
 
+    stats["gemini_calls_used"] = gemini_calls_used
     if methods:
         stats["method"] = ",".join(sorted(methods))
 
