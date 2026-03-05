@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -112,8 +113,11 @@ def _call_gemini_api(client: genai.Client, model_name: str, prompt: str) -> list
     return json.loads(text)
 
 
-def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
-    """Gemini API로 공지 관련도 분석. 실패 시 빈 리스트 반환."""
+async def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
+    """Gemini API로 공지 관련도 분석. 실패 시 빈 리스트 반환.
+
+    동기 API 호출을 별도 스레드에서 실행하여 이벤트 루프 블로킹을 방지합니다.
+    """
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. 키워드 매칭으로 대체됩니다.")
@@ -125,7 +129,7 @@ def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
     prompt = build_prompt(articles, profile_text)
 
     try:
-        results = _call_gemini_api(client, model_name, prompt)
+        results = await asyncio.to_thread(_call_gemini_api, client, model_name, prompt)
         logger.info("Gemini 분석 완료: %d건", len(results))
         return results
     except Exception as e:
@@ -140,6 +144,8 @@ def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
     keywords = config.get("keywords", {})
     high_keywords: list[str] = keywords.get("high", [])
     medium_keywords: list[str] = keywords.get("medium", [])
+    high_lower = [(kw, kw.lower()) for kw in high_keywords]
+    medium_lower = [(kw, kw.lower()) for kw in medium_keywords]
 
     results: list[dict] = []
     for i, a in enumerate(articles, 1):
@@ -147,16 +153,16 @@ def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
         score = 1
         reason = "키워드 매칭 없음"
 
-        for kw in high_keywords:
-            if kw.lower() in text:
-                score = max(score, 4)
+        for kw, kw_l in high_lower:
+            if kw_l in text:
+                score = 4
                 reason = f"키워드 '{kw}' 매칭"
                 break
 
         if score < 4:
-            for kw in medium_keywords:
-                if kw.lower() in text:
-                    score = max(score, 3)
+            for kw, kw_l in medium_lower:
+                if kw_l in text:
+                    score = 3
                     reason = f"키워드 '{kw}' 매칭"
                     break
 
@@ -164,7 +170,29 @@ def keyword_fallback(articles: list[Article], config: dict) -> list[dict]:
     return results
 
 
-def match_articles(
+def _collect_matched(
+    results: list[dict],
+    articles: list[Article],
+    threshold: int,
+) -> tuple[list[tuple[Article, int, str]], int]:
+    """결과 리스트에서 threshold 이상인 항목을 수집. (matched, valid_count) 반환."""
+    matched: list[tuple[Article, int, str]] = []
+    valid_count = 0
+    for r in results:
+        idx_raw = _parse_index(r.get("index"))
+        score = _parse_score(r.get("score"))
+        if idx_raw is None or score is None:
+            logger.debug("잘못된 결과를 건너뜁니다: %s", r)
+            continue
+        valid_count += 1
+        idx = idx_raw - 1
+        if 0 <= idx < len(articles) and score >= threshold:
+            reason = str(r.get("reason", ""))
+            matched.append((articles[idx], score, reason))
+    return matched, valid_count
+
+
+async def match_articles(
     articles: list[Article],
     config: dict,
     force_method: str | None = None,
@@ -184,7 +212,7 @@ def match_articles(
         results = keyword_fallback(articles, config)
         method = "keyword"
     else:
-        results = analyze_with_gemini(articles, config)
+        results = await analyze_with_gemini(articles, config)
         if results:
             method = "gemini"
         else:
@@ -192,36 +220,14 @@ def match_articles(
             results = keyword_fallback(articles, config)
             method = "keyword"
 
-    matched: list[tuple[Article, int, str]] = []
-    valid_result_count = 0
-    for r in results:
-        idx_raw = _parse_index(r.get("index"))
-        score = _parse_score(r.get("score"))
-        if idx_raw is None or score is None:
-            logger.debug("잘못된 Gemini 결과를 건너뜁니다: %s", r)
-            continue
-
-        valid_result_count += 1
-        idx = idx_raw - 1
-        if 0 <= idx < len(articles) and score >= threshold:
-            reason = str(r.get("reason", ""))
-            matched.append((articles[idx], score, reason))
+    matched, valid_result_count = _collect_matched(results, articles, threshold)
 
     # Gemini 응답이 있었지만 유효 결과가 하나도 없으면 키워드 매칭으로 재시도
     if method == "gemini" and valid_result_count == 0:
         logger.info("Gemini 결과 형식이 유효하지 않아 키워드 매칭으로 대체합니다.")
         fallback_results = keyword_fallback(articles, config)
         method = "keyword"
-        matched = []
-        for r in fallback_results:
-            idx_raw = _parse_index(r.get("index"))
-            score = _parse_score(r.get("score"))
-            if idx_raw is None or score is None:
-                continue
-            idx = idx_raw - 1
-            if 0 <= idx < len(articles) and score >= threshold:
-                reason = str(r.get("reason", ""))
-                matched.append((articles[idx], score, reason))
+        matched, _ = _collect_matched(fallback_results, articles, threshold)
 
     matched.sort(key=lambda x: x[1], reverse=True)
     return matched, method

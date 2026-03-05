@@ -9,6 +9,9 @@ for mod_name in [
     "google",
     "google.genai",
     "telegram",
+    "feedparser",
+    "sgmllib",
 ]:
     if mod_name not in sys.modules:
         sys.modules[mod_name] = MagicMock()
+

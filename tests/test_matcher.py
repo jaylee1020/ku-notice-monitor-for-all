@@ -1,27 +1,11 @@
 """matcher.py 단위 테스트"""
 
-from unittest.mock import patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
-from feeds import Article
+from tests.helpers import make_article
+
 from matcher import build_profile_text, build_prompt, keyword_fallback, match_articles
-
-
-def _make_article(**overrides) -> Article:
-    defaults = dict(
-        id="1",
-        title="테스트",
-        link="https://example.com",
-        pub_date="",
-        author="",
-        description="",
-        board_name="테스트게시판",
-        board_id=234,
-        view_count=0,
-        is_pinned=False,
-        attachment_count=0,
-    )
-    defaults.update(overrides)
-    return Article(**defaults)
 
 
 # --- build_profile_text ---
@@ -47,7 +31,7 @@ def test_build_profile_text_empty():
 
 
 def test_build_prompt_contains_articles():
-    articles = [_make_article(title="장학금 공지", board_name="장학공지")]
+    articles = [make_article(title="장학금 공지", board_name="장학공지")]
     prompt = build_prompt(articles, "테스트 프로필")
     assert "장학금 공지" in prompt
     assert "장학공지" in prompt
@@ -59,7 +43,7 @@ def test_build_prompt_contains_articles():
 
 
 def test_keyword_fallback_high_match():
-    articles = [_make_article(title="장학금 신청 안내")]
+    articles = [make_article(title="장학금 신청 안내")]
     config = {"keywords": {"high": ["장학"], "medium": []}}
     results = keyword_fallback(articles, config)
     assert results[0]["score"] == 4
@@ -67,14 +51,14 @@ def test_keyword_fallback_high_match():
 
 
 def test_keyword_fallback_medium_match():
-    articles = [_make_article(title="취업 박람회")]
+    articles = [make_article(title="취업 박람회")]
     config = {"keywords": {"high": ["장학"], "medium": ["취업"]}}
     results = keyword_fallback(articles, config)
     assert results[0]["score"] == 3
 
 
 def test_keyword_fallback_no_match():
-    articles = [_make_article(title="기숙사 청소 안내")]
+    articles = [make_article(title="기숙사 청소 안내")]
     config = {"keywords": {"high": ["장학"], "medium": ["취업"]}}
     results = keyword_fallback(articles, config)
     assert results[0]["score"] == 1
@@ -84,48 +68,48 @@ def test_keyword_fallback_no_match():
 
 
 def test_match_articles_gemini_success():
-    articles = [_make_article(title="장학금"), _make_article(id="2", title="기숙사")]
+    articles = [make_article(title="장학금"), make_article(id="2", title="기숙사")]
     config = {"gemini": {"model": "test", "relevance_threshold": 3}, "profile": {}, "keywords": {}}
     mock_results = [
         {"index": 1, "score": 5, "reason": "장학 관련"},
         {"index": 2, "score": 1, "reason": "무관"},
     ]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
     assert len(matched) == 1
     assert matched[0][1] == 5
     assert method == "gemini"
 
 
 def test_match_articles_gemini_fail_falls_back():
-    articles = [_make_article(title="장학금 안내")]
+    articles = [make_article(title="장학금 안내")]
     config = {
         "gemini": {"model": "test", "relevance_threshold": 3},
         "profile": {},
         "keywords": {"high": ["장학"], "medium": []},
     }
-    with patch("matcher.analyze_with_gemini", return_value=[]):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=[]):
+        matched, method = asyncio.run(match_articles(articles, config))
     assert method == "keyword"
     assert len(matched) == 1
 
 
 def test_match_articles_empty():
-    matched, method = match_articles([], {"gemini": {"relevance_threshold": 3}})
+    matched, method = asyncio.run(match_articles([], {"gemini": {"relevance_threshold": 3}}))
     assert matched == []
     assert method == "none"
 
 
 def test_match_articles_gemini_string_score_and_invalid_entries():
-    articles = [_make_article(title="장학금")]
+    articles = [make_article(title="장학금")]
     config = {"gemini": {"model": "test", "relevance_threshold": 3}, "profile": {}, "keywords": {}}
     mock_results = [
         {"index": "1", "score": "5", "reason": "문자열 점수"},
         {"index": "x", "score": 5, "reason": "잘못된 index"},
         {"index": 1, "score": "bad", "reason": "잘못된 score"},
     ]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
 
     assert method == "gemini"
     assert len(matched) == 1
@@ -133,15 +117,15 @@ def test_match_articles_gemini_string_score_and_invalid_entries():
 
 
 def test_match_articles_gemini_invalid_results_fallback_to_keyword():
-    articles = [_make_article(title="장학금 안내")]
+    articles = [make_article(title="장학금 안내")]
     config = {
         "gemini": {"model": "test", "relevance_threshold": 3},
         "profile": {},
         "keywords": {"high": ["장학"], "medium": []},
     }
     mock_results = [{"index": "x", "score": "bad", "reason": "형식 오류"}]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
 
     assert method == "keyword"
     assert len(matched) == 1

@@ -1,7 +1,8 @@
 """notifier.py 단위 테스트"""
 
+from tests.helpers import make_article
+
 from constants import MAX_TELEGRAM_MESSAGE_LENGTH
-from feeds import Article
 from notifier import (
     build_error_message,
     build_no_new_message,
@@ -11,29 +12,11 @@ from notifier import (
 )
 
 
-def _make_article(**overrides) -> Article:
-    defaults = dict(
-        id="1",
-        title="테스트",
-        link="https://example.com",
-        pub_date="",
-        author="",
-        description="",
-        board_name="테스트게시판",
-        board_id=234,
-        view_count=0,
-        is_pinned=False,
-        attachment_count=0,
-    )
-    defaults.update(overrides)
-    return Article(**defaults)
-
-
 # --- build_relevant_message ---
 
 
 def test_build_relevant_message():
-    matched = [(_make_article(title="장학금", board_name="장학공지", link="https://example.com"), 5, "장학 관련")]
+    matched = [(make_article(title="장학금", board_name="장학공지", link="https://example.com"), 5, "장학 관련")]
     msg = build_relevant_message(matched, 10)
     assert "장학금" in msg
     assert "장학공지" in msg

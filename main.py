@@ -24,7 +24,14 @@ from feeds import (
 )
 from matcher import match_articles
 from notifier import notify_all_new, notify_error, notify_no_new, notify_no_relevant, notify_relevant, send_telegram
-from users import get_or_create_user, iter_active_allowed_users, load_users, save_users, set_profile
+from users import (
+    get_or_create_user,
+    has_profile_data,
+    iter_active_allowed_users,
+    load_users,
+    save_users,
+    set_profile,
+)
 
 
 def setup_logging() -> None:
@@ -136,15 +143,6 @@ def _log_run_summary(stats: dict) -> None:
     )
 
 
-def _has_profile_data(profile: dict) -> bool:
-    return bool(
-        profile.get("major")
-        or profile.get("campus")
-        or profile.get("status")
-        or int(profile.get("year", 0)) > 0
-    )
-
-
 def _filter_level_to_threshold(level: str) -> int:
     normalized = (level or "medium").lower().strip()
     if normalized == "high":
@@ -173,13 +171,34 @@ async def _process_command_updates(config: dict, users_state: dict) -> int:
     users_state.setdefault("meta", {})
     users_state["meta"]["last_update_id"] = max_update_id
 
-    sent = 0
-    for chat_id, text in responses:
-        await send_telegram(text, chat_id=chat_id)
-        sent += 1
+    if responses:
+        await asyncio.gather(*(send_telegram(text, chat_id=chat_id) for chat_id, text in responses))
+    sent = len(responses)
 
     logger.info("명령 처리 완료: 업데이트 %d건, 응답 %d건", len(updates), sent)
     return sent
+
+
+def _finalize_run(
+    all_articles: list,
+    state: dict,
+    users_state: dict,
+    stats: dict,
+    state_path: Path,
+    users_path: Path,
+) -> None:
+    """공지 확인 처리, 상태 저장, 실행 요약 로그 출력"""
+    logger = logging.getLogger(__name__)
+    mark_as_seen(all_articles, state)
+    state["last_run_stats"] = stats
+    save_state(state, str(state_path))
+    save_users(users_state, str(users_path))
+    logger.info(
+        "상태 저장 완료 (공지: %d건, 사용자: %d명)",
+        len(state.get("seen_ids", {})),
+        len(users_state.get("users", {})),
+    )
+    _log_run_summary(stats)
 
 
 def _build_user_match_config(base_config: dict, user: dict, threshold: int) -> dict:
@@ -201,13 +220,12 @@ def _migrate_legacy_single_user(config: dict, users_state: dict) -> None:
     if not legacy_chat_id:
         return
 
-    admin_chat_id = str(config.get("settings", {}).get("admin_chat_id", "")).strip()
-    user = get_or_create_user(users_state, legacy_chat_id, admin_chat_id=admin_chat_id)
+    user = get_or_create_user(users_state, legacy_chat_id)
     user["allowed"] = True
     user["active"] = True
 
     profile = config.get("profile", {})
-    if isinstance(profile, dict) and _has_profile_data(profile):
+    if isinstance(profile, dict) and has_profile_data(profile):
         set_profile(user, "legacy PROFILE_JSON", profile)
     else:
         user["profile_registered"] = False
@@ -269,23 +287,14 @@ async def run() -> None:
 
     if not recipients:
         logger.info("활성 사용자가 없어 알림 전송을 건너뜁니다.")
-        mark_as_seen(all_articles, state)
-        state["last_run_stats"] = stats
-        save_state(state, str(state_path))
-        save_users(users_state, str(users_path))
-        _log_run_summary(stats)
+        _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
         return
 
     if not new_articles:
         logger.info("새로운 공지가 없습니다.")
-        for user in recipients:
-            await notify_no_new(chat_id=user["chat_id"])
-            stats["notifications_sent"] += 1
-        mark_as_seen(all_articles, state)
-        state["last_run_stats"] = stats
-        save_state(state, str(state_path))
-        save_users(users_state, str(users_path))
-        _log_run_summary(stats)
+        await asyncio.gather(*(notify_no_new(chat_id=user["chat_id"]) for user in recipients))
+        stats["notifications_sent"] += len(recipients)
+        _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
         return
 
     logger.info("새 공지 본문 수집 중... (%d건)", len(new_articles))
@@ -295,11 +304,13 @@ async def run() -> None:
     methods: set[str] = set()
     gemini_calls_used = 0
     last_gemini_call_at = 0.0
-    gemini_cfg = config.get("gemini", {})
-    max_calls_per_run = int(gemini_cfg.get("max_calls_per_run", 120) or 120)
-    min_call_interval_sec = float(gemini_cfg.get("min_call_interval_sec", 4.2) or 4.2)
-    disable_after_fallback = bool(gemini_cfg.get("disable_after_fallback", True))
+    gemini_cfg = config["gemini"]
+    max_calls_per_run = gemini_cfg["max_calls_per_run"]
+    min_call_interval_sec = gemini_cfg["min_call_interval_sec"]
+    disable_after_fallback = gemini_cfg["disable_after_fallback"]
     gemini_enabled = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+
+    notification_tasks: list[asyncio.coroutines] = []
 
     for user in recipients:
         chat_id = user["chat_id"]
@@ -307,7 +318,7 @@ async def run() -> None:
         level = str(user.get("filter_level", "medium")).lower().strip()
 
         if not profile_registered or level == "all":
-            await notify_all_new(new_articles, chat_id=chat_id)
+            notification_tasks.append(notify_all_new(new_articles, chat_id=chat_id))
             stats["notifications_sent"] += 1
             continue
 
@@ -318,7 +329,7 @@ async def run() -> None:
             user_config = _build_user_match_config(config, user, threshold)
             force_keyword = (not gemini_enabled) or (max_calls_per_run > 0 and gemini_calls_used >= max_calls_per_run)
             if force_keyword:
-                matched, method = match_articles(new_articles, user_config, force_method="keyword")
+                matched, method = await match_articles(new_articles, user_config, force_method="keyword")
                 stats["keyword_forced_groups"] += 1
             else:
                 if gemini_calls_used > 0 and min_call_interval_sec > 0:
@@ -326,7 +337,7 @@ async def run() -> None:
                     wait_sec = min_call_interval_sec - elapsed
                     if wait_sec > 0:
                         await asyncio.sleep(wait_sec)
-                matched, method = match_articles(new_articles, user_config)
+                matched, method = await match_articles(new_articles, user_config)
                 gemini_calls_used += 1
                 last_gemini_call_at = monotonic()
                 if method != "gemini" and disable_after_fallback:
@@ -338,25 +349,19 @@ async def run() -> None:
         methods.add(method)
         stats["matched_articles"] += len(matched)
         if matched:
-            await notify_relevant(matched, len(new_articles), chat_id=chat_id)
+            notification_tasks.append(notify_relevant(matched, len(new_articles), chat_id=chat_id))
         else:
-            await notify_no_relevant(len(new_articles), chat_id=chat_id)
+            notification_tasks.append(notify_no_relevant(len(new_articles), chat_id=chat_id))
         stats["notifications_sent"] += 1
+
+    if notification_tasks:
+        await asyncio.gather(*notification_tasks)
 
     stats["gemini_calls_used"] = gemini_calls_used
     if methods:
         stats["method"] = ",".join(sorted(methods))
 
-    mark_as_seen(all_articles, state)
-    state["last_run_stats"] = stats
-    save_state(state, str(state_path))
-    save_users(users_state, str(users_path))
-    logger.info(
-        "상태 저장 완료 (공지: %d건, 사용자: %d명)",
-        len(state.get("seen_ids", {})),
-        len(users_state.get("users", {})),
-    )
-    _log_run_summary(stats)
+    _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
     logger.info("=== 완료 ===")
 
 
