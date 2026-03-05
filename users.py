@@ -108,9 +108,14 @@ def _normalize_user_record(chat_id: str, value: object, is_admin: bool = False) 
 
 def _default_users_state() -> dict:
     return {
-        "meta": {"last_update_id": 0, "version": 1},
+        "meta": {"last_update_id": 0, "version": 1, "admin_chat_id": ""},
         "users": {},
     }
+
+
+def get_admin_chat_id(users_state: dict) -> str:
+    """users_state에서 admin_chat_id를 반환."""
+    return str(users_state.get("meta", {}).get("admin_chat_id", "")).strip()
 
 
 def load_users(path: str, admin_chat_id: str = "") -> dict:
@@ -118,6 +123,7 @@ def load_users(path: str, admin_chat_id: str = "") -> dict:
     file_path = Path(path)
     state = _default_users_state()
     admin_id = _normalize_chat_id(admin_chat_id) if str(admin_chat_id).strip() else ""
+    state["meta"]["admin_chat_id"] = admin_id
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -146,7 +152,7 @@ def load_users(path: str, admin_chat_id: str = "") -> dict:
                 state["users"] = normalized
 
     if admin_id:
-        get_or_create_user(state, admin_id, admin_id)
+        get_or_create_user(state, admin_id)
 
     return state
 
@@ -173,11 +179,11 @@ def save_users(state: dict, path: str) -> None:
         raise
 
 
-def get_or_create_user(users_state: dict, chat_id: str | int, admin_chat_id: str = "") -> dict:
+def get_or_create_user(users_state: dict, chat_id: str | int) -> dict:
     """사용자 레코드 조회. 없으면 기본 레코드 생성."""
     users = users_state.setdefault("users", {})
     cid = _normalize_chat_id(chat_id)
-    admin_id = _normalize_chat_id(admin_chat_id) if str(admin_chat_id).strip() else ""
+    admin_id = get_admin_chat_id(users_state)
     is_admin = bool(admin_id and cid == admin_id)
 
     record = users.get(cid)
@@ -191,11 +197,10 @@ def set_allow(
     users_state: dict,
     chat_id: str | int,
     allowed: bool,
-    admin_chat_id: str = "",
     max_users: int = 30,
 ) -> tuple[bool, str]:
     """허용목록 상태를 변경."""
-    user = get_or_create_user(users_state, chat_id, admin_chat_id)
+    user = get_or_create_user(users_state, chat_id)
     if user.get("is_admin") and not allowed:
         return False, "관리자 계정은 차단할 수 없습니다."
 

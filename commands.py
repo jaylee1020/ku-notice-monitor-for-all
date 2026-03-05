@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 
-from telegram import Bot, Update
+from telegram import Update
 
+from notifier import get_bot
 from users import delete_user, get_or_create_user, has_profile_data, set_allow, set_filter, set_profile
 
 logger = logging.getLogger(__name__)
@@ -155,11 +155,9 @@ def _blocked_text(chat_id: str) -> str:
 
 async def fetch_updates(last_update_id: int) -> list[Update]:
     """텔레그램 업데이트 조회 (하루 1회 배치)."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not token:
+    bot = get_bot()
+    if not bot:
         return []
-
-    bot = Bot(token=token)
     offset = int(last_update_id) + 1 if isinstance(last_update_id, int) else None
     try:
         return await bot.get_updates(
@@ -184,10 +182,9 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
     if not command:
         return []
 
-    admin_chat_id = str(config.get("settings", {}).get("admin_chat_id", "")).strip()
     max_users = int(config.get("settings", {}).get("max_users", 30) or 30)
     chat_id = str(chat.id)
-    user = get_or_create_user(users_state, chat_id, admin_chat_id=admin_chat_id)
+    user = get_or_create_user(users_state, chat_id)
 
     if command == "/help":
         return [(chat_id, _help_text())]
@@ -209,7 +206,6 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
             users_state,
             target_id,
             allowed=(command == "/allow"),
-            admin_chat_id=admin_chat_id,
             max_users=max_users,
         )
         if ok and command == "/allow" and target_id != chat_id:

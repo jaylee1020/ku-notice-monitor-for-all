@@ -1,6 +1,7 @@
 """matcher.py 단위 테스트"""
 
-from unittest.mock import patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 from tests.helpers import make_article
 
@@ -73,8 +74,8 @@ def test_match_articles_gemini_success():
         {"index": 1, "score": 5, "reason": "장학 관련"},
         {"index": 2, "score": 1, "reason": "무관"},
     ]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
     assert len(matched) == 1
     assert matched[0][1] == 5
     assert method == "gemini"
@@ -87,14 +88,14 @@ def test_match_articles_gemini_fail_falls_back():
         "profile": {},
         "keywords": {"high": ["장학"], "medium": []},
     }
-    with patch("matcher.analyze_with_gemini", return_value=[]):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=[]):
+        matched, method = asyncio.run(match_articles(articles, config))
     assert method == "keyword"
     assert len(matched) == 1
 
 
 def test_match_articles_empty():
-    matched, method = match_articles([], {"gemini": {"relevance_threshold": 3}})
+    matched, method = asyncio.run(match_articles([], {"gemini": {"relevance_threshold": 3}}))
     assert matched == []
     assert method == "none"
 
@@ -107,8 +108,8 @@ def test_match_articles_gemini_string_score_and_invalid_entries():
         {"index": "x", "score": 5, "reason": "잘못된 index"},
         {"index": 1, "score": "bad", "reason": "잘못된 score"},
     ]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
 
     assert method == "gemini"
     assert len(matched) == 1
@@ -123,8 +124,8 @@ def test_match_articles_gemini_invalid_results_fallback_to_keyword():
         "keywords": {"high": ["장학"], "medium": []},
     }
     mock_results = [{"index": "x", "score": "bad", "reason": "형식 오류"}]
-    with patch("matcher.analyze_with_gemini", return_value=mock_results):
-        matched, method = match_articles(articles, config)
+    with patch("matcher.analyze_with_gemini", new_callable=AsyncMock, return_value=mock_results):
+        matched, method = asyncio.run(match_articles(articles, config))
 
     assert method == "keyword"
     assert len(matched) == 1

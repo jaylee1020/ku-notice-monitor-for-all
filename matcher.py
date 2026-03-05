@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -112,8 +113,11 @@ def _call_gemini_api(client: genai.Client, model_name: str, prompt: str) -> list
     return json.loads(text)
 
 
-def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
-    """Gemini API로 공지 관련도 분석. 실패 시 빈 리스트 반환."""
+async def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
+    """Gemini API로 공지 관련도 분석. 실패 시 빈 리스트 반환.
+
+    동기 API 호출을 별도 스레드에서 실행하여 이벤트 루프 블로킹을 방지합니다.
+    """
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. 키워드 매칭으로 대체됩니다.")
@@ -125,7 +129,7 @@ def analyze_with_gemini(articles: list[Article], config: dict) -> list[dict]:
     prompt = build_prompt(articles, profile_text)
 
     try:
-        results = _call_gemini_api(client, model_name, prompt)
+        results = await asyncio.to_thread(_call_gemini_api, client, model_name, prompt)
         logger.info("Gemini 분석 완료: %d건", len(results))
         return results
     except Exception as e:
@@ -188,7 +192,7 @@ def _collect_matched(
     return matched, valid_count
 
 
-def match_articles(
+async def match_articles(
     articles: list[Article],
     config: dict,
     force_method: str | None = None,
@@ -208,7 +212,7 @@ def match_articles(
         results = keyword_fallback(articles, config)
         method = "keyword"
     else:
-        results = analyze_with_gemini(articles, config)
+        results = await analyze_with_gemini(articles, config)
         if results:
             method = "gemini"
         else:

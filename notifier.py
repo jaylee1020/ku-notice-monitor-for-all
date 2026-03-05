@@ -13,6 +13,20 @@ from feeds import Article
 
 logger = logging.getLogger(__name__)
 
+_bot_instance: Bot | None = None
+
+
+def get_bot() -> Bot | None:
+    """Bot 싱글턴 인스턴스 반환. 토큰 미설정 시 None."""
+    global _bot_instance
+    if _bot_instance is not None:
+        return _bot_instance
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return None
+    _bot_instance = Bot(token=token)
+    return _bot_instance
+
 
 def build_relevant_message(
     matched: list[tuple[Article, int, str]],
@@ -97,10 +111,10 @@ def split_message(text: str) -> list[str]:
 
 async def send_telegram(text: str, chat_id: str | int | None = None) -> None:
     """텔레그램 봇으로 메시지 전송"""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    bot = get_bot()
     target_chat_id = str(chat_id).strip() if chat_id is not None else os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-    if not token or not target_chat_id:
+    if not bot or not target_chat_id:
         logger.warning(
             "TELEGRAM_BOT_TOKEN 또는 chat_id가 설정되지 않았습니다. "
             "메시지를 전송하지 않고 콘솔에 출력합니다."
@@ -108,7 +122,6 @@ async def send_telegram(text: str, chat_id: str | int | None = None) -> None:
         logger.info("--- 메시지 미리보기 ---\n%s", text)
         return
 
-    bot = Bot(token=token)
     parts = split_message(text)
     sent = 0
     try:

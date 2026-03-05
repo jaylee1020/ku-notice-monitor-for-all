@@ -171,10 +171,9 @@ async def _process_command_updates(config: dict, users_state: dict) -> int:
     users_state.setdefault("meta", {})
     users_state["meta"]["last_update_id"] = max_update_id
 
-    sent = 0
-    for chat_id, text in responses:
-        await send_telegram(text, chat_id=chat_id)
-        sent += 1
+    if responses:
+        await asyncio.gather(*(send_telegram(text, chat_id=chat_id) for chat_id, text in responses))
+    sent = len(responses)
 
     logger.info("명령 처리 완료: 업데이트 %d건, 응답 %d건", len(updates), sent)
     return sent
@@ -221,8 +220,7 @@ def _migrate_legacy_single_user(config: dict, users_state: dict) -> None:
     if not legacy_chat_id:
         return
 
-    admin_chat_id = str(config.get("settings", {}).get("admin_chat_id", "")).strip()
-    user = get_or_create_user(users_state, legacy_chat_id, admin_chat_id=admin_chat_id)
+    user = get_or_create_user(users_state, legacy_chat_id)
     user["allowed"] = True
     user["active"] = True
 
@@ -294,9 +292,8 @@ async def run() -> None:
 
     if not new_articles:
         logger.info("새로운 공지가 없습니다.")
-        for user in recipients:
-            await notify_no_new(chat_id=user["chat_id"])
-            stats["notifications_sent"] += 1
+        await asyncio.gather(*(notify_no_new(chat_id=user["chat_id"]) for user in recipients))
+        stats["notifications_sent"] += len(recipients)
         _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
         return
 
@@ -313,13 +310,15 @@ async def run() -> None:
     disable_after_fallback = gemini_cfg["disable_after_fallback"]
     gemini_enabled = bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
+    notification_tasks: list[asyncio.coroutines] = []
+
     for user in recipients:
         chat_id = user["chat_id"]
         profile_registered = bool(user.get("profile_registered", False))
         level = str(user.get("filter_level", "medium")).lower().strip()
 
         if not profile_registered or level == "all":
-            await notify_all_new(new_articles, chat_id=chat_id)
+            notification_tasks.append(notify_all_new(new_articles, chat_id=chat_id))
             stats["notifications_sent"] += 1
             continue
 
@@ -330,7 +329,7 @@ async def run() -> None:
             user_config = _build_user_match_config(config, user, threshold)
             force_keyword = (not gemini_enabled) or (max_calls_per_run > 0 and gemini_calls_used >= max_calls_per_run)
             if force_keyword:
-                matched, method = match_articles(new_articles, user_config, force_method="keyword")
+                matched, method = await match_articles(new_articles, user_config, force_method="keyword")
                 stats["keyword_forced_groups"] += 1
             else:
                 if gemini_calls_used > 0 and min_call_interval_sec > 0:
@@ -338,7 +337,7 @@ async def run() -> None:
                     wait_sec = min_call_interval_sec - elapsed
                     if wait_sec > 0:
                         await asyncio.sleep(wait_sec)
-                matched, method = match_articles(new_articles, user_config)
+                matched, method = await match_articles(new_articles, user_config)
                 gemini_calls_used += 1
                 last_gemini_call_at = monotonic()
                 if method != "gemini" and disable_after_fallback:
@@ -350,10 +349,13 @@ async def run() -> None:
         methods.add(method)
         stats["matched_articles"] += len(matched)
         if matched:
-            await notify_relevant(matched, len(new_articles), chat_id=chat_id)
+            notification_tasks.append(notify_relevant(matched, len(new_articles), chat_id=chat_id))
         else:
-            await notify_no_relevant(len(new_articles), chat_id=chat_id)
+            notification_tasks.append(notify_no_relevant(len(new_articles), chat_id=chat_id))
         stats["notifications_sent"] += 1
+
+    if notification_tasks:
+        await asyncio.gather(*notification_tasks)
 
     stats["gemini_calls_used"] = gemini_calls_used
     if methods:
