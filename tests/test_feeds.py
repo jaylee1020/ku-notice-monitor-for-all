@@ -4,8 +4,9 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from tests.helpers import make_article
+
 from feeds import (
-    Article,
     _to_int,
     extract_article_id,
     filter_new_articles,
@@ -16,24 +17,6 @@ from feeds import (
     parse_pub_date,
     save_state,
 )
-
-
-def _make_article(**overrides) -> Article:
-    defaults = dict(
-        id="1",
-        title="테스트",
-        link="https://example.com",
-        pub_date="",
-        author="",
-        description="",
-        board_name="테스트게시판",
-        board_id=234,
-        view_count=0,
-        is_pinned=False,
-        attachment_count=0,
-    )
-    defaults.update(overrides)
-    return Article(**defaults)
 
 
 # --- parse_pub_date ---
@@ -116,7 +99,7 @@ def test_to_int_custom_default():
 
 
 def test_filter_new_articles_filters_seen():
-    articles = [_make_article(id="1"), _make_article(id="2"), _make_article(id="3")]
+    articles = [make_article(id="1"), make_article(id="2"), make_article(id="3")]
     state = {"seen_ids": {"234:1": "2026-01-01T00:00:00", "234:3": "2026-01-01T00:00:00"}}
     result = filter_new_articles(articles, state)
     assert len(result) == 1
@@ -124,7 +107,7 @@ def test_filter_new_articles_filters_seen():
 
 
 def test_filter_new_articles_empty_state():
-    articles = [_make_article(id="1")]
+    articles = [make_article(id="1")]
     state = {"seen_ids": {}}
     assert len(filter_new_articles(articles, state)) == 1
 
@@ -133,7 +116,7 @@ def test_filter_new_articles_empty_state():
 
 
 def test_mark_as_seen():
-    articles = [_make_article(id="10"), _make_article(id="20")]
+    articles = [make_article(id="10"), make_article(id="20")]
     state = {"seen_ids": {}}
     mark_as_seen(articles, state)
     assert "234:10" in state["seen_ids"]
@@ -195,7 +178,7 @@ def test_save_state_no_tmp_left(tmp_path):
 
 
 def test_filter_new_articles_migrates_legacy_id_key():
-    articles = [_make_article(id="1", board_id=243)]
+    articles = [make_article(id="1", board_id=243)]
     state = {"seen_ids": {"1": "2026-01-01T00:00:00"}}
     result = filter_new_articles(articles, state)
     assert result == []

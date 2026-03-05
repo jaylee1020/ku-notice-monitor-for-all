@@ -24,7 +24,14 @@ from feeds import (
 )
 from matcher import match_articles
 from notifier import notify_all_new, notify_error, notify_no_new, notify_no_relevant, notify_relevant, send_telegram
-from users import get_or_create_user, iter_active_allowed_users, load_users, save_users, set_profile
+from users import (
+    get_or_create_user,
+    has_profile_data,
+    iter_active_allowed_users,
+    load_users,
+    save_users,
+    set_profile,
+)
 
 
 def setup_logging() -> None:
@@ -136,15 +143,6 @@ def _log_run_summary(stats: dict) -> None:
     )
 
 
-def _has_profile_data(profile: dict) -> bool:
-    return bool(
-        profile.get("major")
-        or profile.get("campus")
-        or profile.get("status")
-        or int(profile.get("year", 0)) > 0
-    )
-
-
 def _filter_level_to_threshold(level: str) -> int:
     normalized = (level or "medium").lower().strip()
     if normalized == "high":
@@ -182,6 +180,28 @@ async def _process_command_updates(config: dict, users_state: dict) -> int:
     return sent
 
 
+def _finalize_run(
+    all_articles: list,
+    state: dict,
+    users_state: dict,
+    stats: dict,
+    state_path: Path,
+    users_path: Path,
+) -> None:
+    """공지 확인 처리, 상태 저장, 실행 요약 로그 출력"""
+    logger = logging.getLogger(__name__)
+    mark_as_seen(all_articles, state)
+    state["last_run_stats"] = stats
+    save_state(state, str(state_path))
+    save_users(users_state, str(users_path))
+    logger.info(
+        "상태 저장 완료 (공지: %d건, 사용자: %d명)",
+        len(state.get("seen_ids", {})),
+        len(users_state.get("users", {})),
+    )
+    _log_run_summary(stats)
+
+
 def _build_user_match_config(base_config: dict, user: dict, threshold: int) -> dict:
     config_copy = copy.deepcopy(base_config)
     config_copy["profile"] = user.get("profile", {})
@@ -207,7 +227,7 @@ def _migrate_legacy_single_user(config: dict, users_state: dict) -> None:
     user["active"] = True
 
     profile = config.get("profile", {})
-    if isinstance(profile, dict) and _has_profile_data(profile):
+    if isinstance(profile, dict) and has_profile_data(profile):
         set_profile(user, "legacy PROFILE_JSON", profile)
     else:
         user["profile_registered"] = False
@@ -269,11 +289,7 @@ async def run() -> None:
 
     if not recipients:
         logger.info("활성 사용자가 없어 알림 전송을 건너뜁니다.")
-        mark_as_seen(all_articles, state)
-        state["last_run_stats"] = stats
-        save_state(state, str(state_path))
-        save_users(users_state, str(users_path))
-        _log_run_summary(stats)
+        _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
         return
 
     if not new_articles:
@@ -281,11 +297,7 @@ async def run() -> None:
         for user in recipients:
             await notify_no_new(chat_id=user["chat_id"])
             stats["notifications_sent"] += 1
-        mark_as_seen(all_articles, state)
-        state["last_run_stats"] = stats
-        save_state(state, str(state_path))
-        save_users(users_state, str(users_path))
-        _log_run_summary(stats)
+        _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
         return
 
     logger.info("새 공지 본문 수집 중... (%d건)", len(new_articles))
@@ -295,10 +307,10 @@ async def run() -> None:
     methods: set[str] = set()
     gemini_calls_used = 0
     last_gemini_call_at = 0.0
-    gemini_cfg = config.get("gemini", {})
-    max_calls_per_run = int(gemini_cfg.get("max_calls_per_run", 120) or 120)
-    min_call_interval_sec = float(gemini_cfg.get("min_call_interval_sec", 4.2) or 4.2)
-    disable_after_fallback = bool(gemini_cfg.get("disable_after_fallback", True))
+    gemini_cfg = config["gemini"]
+    max_calls_per_run = gemini_cfg["max_calls_per_run"]
+    min_call_interval_sec = gemini_cfg["min_call_interval_sec"]
+    disable_after_fallback = gemini_cfg["disable_after_fallback"]
     gemini_enabled = bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
     for user in recipients:
@@ -347,16 +359,7 @@ async def run() -> None:
     if methods:
         stats["method"] = ",".join(sorted(methods))
 
-    mark_as_seen(all_articles, state)
-    state["last_run_stats"] = stats
-    save_state(state, str(state_path))
-    save_users(users_state, str(users_path))
-    logger.info(
-        "상태 저장 완료 (공지: %d건, 사용자: %d명)",
-        len(state.get("seen_ids", {})),
-        len(users_state.get("users", {})),
-    )
-    _log_run_summary(stats)
+    _finalize_run(all_articles, state, users_state, stats, state_path, users_path)
     logger.info("=== 완료 ===")
 
 

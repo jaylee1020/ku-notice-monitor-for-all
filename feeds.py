@@ -174,13 +174,11 @@ async def fetch_all_feeds(config: dict) -> list[Article]:
 
 def load_state(state_path: str) -> dict:
     """state.json 로드. 없거나 손상되면 초기 상태 반환"""
-    path = Path(state_path)
-    if not path.exists():
-        return {"seen_ids": {}, "last_run": None}
-
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(state_path, "r", encoding="utf-8") as f:
             state = json.load(f)
+    except FileNotFoundError:
+        return {"seen_ids": {}, "last_run": None}
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("state 파일 로드 실패, 초기 상태로 복구합니다: %s", e)
         return {"seen_ids": {}, "last_run": None}
@@ -283,15 +281,14 @@ async def enrich_articles_with_body(articles: list[Article], config: dict) -> No
     ssl_verify = config.get("settings", {}).get("ssl_verify", False)
     ssl_context = _make_ssl_context(ssl_verify)
 
+    link_articles = [a for a in articles if a.link]
     async with aiohttp.ClientSession(headers=_DEFAULT_HEADERS) as session:
         tasks = [
             _fetch_article_body_async(session, a.link, ssl_context)
-            for a in articles
-            if a.link
+            for a in link_articles
         ]
         bodies = await asyncio.gather(*tasks, return_exceptions=True)
 
-    link_articles = [a for a in articles if a.link]
     for article, body in zip(link_articles, bodies):
         if isinstance(body, Exception):
             logger.warning("본문 크롤링 예외 - %s: %s", article.link, body)

@@ -64,7 +64,7 @@ def _normalize_profile(value: object) -> dict:
     return profile
 
 
-def _has_profile_data(profile: dict) -> bool:
+def has_profile_data(profile: dict) -> bool:
     return bool(
         profile.get("major")
         or profile.get("campus")
@@ -90,7 +90,7 @@ def _normalize_user_record(chat_id: str, value: object, is_admin: bool = False) 
     profile = _normalize_profile(value.get("profile", {}))
     base["profile"] = profile
     base["profile_raw"] = str(value.get("profile_raw", "")).strip()
-    base["profile_registered"] = bool(value.get("profile_registered", _has_profile_data(profile)))
+    base["profile_registered"] = bool(value.get("profile_registered", has_profile_data(profile)))
 
     created_at = str(value.get("created_at", "")).strip()
     updated_at = str(value.get("updated_at", "")).strip()
@@ -119,29 +119,31 @@ def load_users(path: str, admin_chat_id: str = "") -> dict:
     state = _default_users_state()
     admin_id = _normalize_chat_id(admin_chat_id) if str(admin_chat_id).strip() else ""
 
-    if file_path.exists():
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            if isinstance(raw, dict):
-                meta = raw.get("meta", {})
-                if isinstance(meta, dict):
-                    try:
-                        state["meta"]["last_update_id"] = int(meta.get("last_update_id", 0))
-                    except (TypeError, ValueError):
-                        state["meta"]["last_update_id"] = 0
-                    state["meta"]["version"] = int(meta.get("version", 1) or 1)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("users 파일 로드 실패, 초기 상태로 복구합니다: %s", e)
+    else:
+        if isinstance(raw, dict):
+            meta = raw.get("meta", {})
+            if isinstance(meta, dict):
+                try:
+                    state["meta"]["last_update_id"] = int(meta.get("last_update_id", 0))
+                except (TypeError, ValueError):
+                    state["meta"]["last_update_id"] = 0
+                state["meta"]["version"] = int(meta.get("version", 1) or 1)
 
-                users = raw.get("users", {})
-                if isinstance(users, dict):
-                    normalized: dict[str, dict] = {}
-                    for chat_id, value in users.items():
-                        cid = _normalize_chat_id(chat_id)
-                        is_admin = admin_id != "" and cid == admin_id
-                        normalized[cid] = _normalize_user_record(cid, value, is_admin=is_admin)
-                    state["users"] = normalized
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning("users 파일 로드 실패, 초기 상태로 복구합니다: %s", e)
+            users = raw.get("users", {})
+            if isinstance(users, dict):
+                normalized: dict[str, dict] = {}
+                for chat_id, value in users.items():
+                    cid = _normalize_chat_id(chat_id)
+                    is_admin = admin_id != "" and cid == admin_id
+                    normalized[cid] = _normalize_user_record(cid, value, is_admin=is_admin)
+                state["users"] = normalized
 
     if admin_id:
         get_or_create_user(state, admin_id, admin_id)
@@ -219,10 +221,7 @@ def delete_user(users_state: dict, chat_id: str | int) -> bool:
     """사용자 레코드 삭제."""
     cid = _normalize_chat_id(chat_id)
     users = users_state.setdefault("users", {})
-    if cid in users:
-        users.pop(cid, None)
-        return True
-    return False
+    return users.pop(cid, None) is not None
 
 
 def set_filter(user: dict, level: str) -> None:
@@ -239,7 +238,7 @@ def set_profile(user: dict, profile_raw: str, profile: dict) -> None:
     normalized_profile = _normalize_profile(profile)
     user["profile"] = normalized_profile
     user["profile_raw"] = profile_raw.strip()
-    user["profile_registered"] = _has_profile_data(normalized_profile)
+    user["profile_registered"] = has_profile_data(normalized_profile)
     if user["profile_registered"] and str(user.get("filter_level", "")).strip() not in VALID_FILTER_LEVELS:
         user["filter_level"] = DEFAULT_FILTER_LEVEL
     user["updated_at"] = _now_iso()

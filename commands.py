@@ -8,7 +8,7 @@ import re
 
 from telegram import Bot, Update
 
-from users import delete_user, get_or_create_user, set_allow, set_filter, set_profile
+from users import delete_user, get_or_create_user, has_profile_data, set_allow, set_filter, set_profile
 
 logger = logging.getLogger(__name__)
 
@@ -114,15 +114,6 @@ def parse_profile_text(text: str) -> dict:
             profile["major"] = major_candidates[0]
 
     return profile
-
-
-def _has_profile_data(profile: dict) -> bool:
-    return bool(
-        profile.get("major")
-        or profile.get("campus")
-        or profile.get("status")
-        or int(profile.get("year", 0)) > 0
-    )
 
 
 def _help_text() -> str:
@@ -259,7 +250,7 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
         if not arg:
             return [(chat_id, "예시: /profile 컴퓨터공학부 / 2학년 / 서울캠퍼스 / 재학")]
         profile = parse_profile_text(arg)
-        if not _has_profile_data(profile):
+        if not has_profile_data(profile):
             return [
                 (
                     chat_id,
