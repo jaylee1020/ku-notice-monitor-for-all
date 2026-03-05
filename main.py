@@ -1,6 +1,7 @@
 """건국대학교 공지 모니터링 에이전트 - 메인 실행 파일"""
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from commands import fetch_updates, handle_command
 from feeds import (
     check_ssl_health,
     enrich_articles_with_body,
@@ -20,7 +22,8 @@ from feeds import (
     save_state,
 )
 from matcher import match_articles
-from notifier import notify_error, notify_no_new, notify_no_relevant, notify_relevant
+from notifier import notify_all_new, notify_error, notify_no_new, notify_no_relevant, notify_relevant, send_telegram
+from users import get_or_create_user, iter_active_allowed_users, load_users, save_users, set_profile
 
 
 def setup_logging() -> None:
@@ -53,15 +56,26 @@ def _load_json_env(var_name: str, fallback: dict) -> dict:
     return value
 
 
+def _resolve_admin_chat_id(raw_value: object) -> str:
+    from_env = os.environ.get("ADMIN_CHAT_ID", "").strip()
+    if from_env:
+        return from_env
+    text = str(raw_value).strip()
+    return text
+
+
 def load_config() -> dict:
-    """config.yaml 로드 후 환경변수로 개인정보 오버라이드"""
+    """config.yaml 로드 후 환경변수 오버라이드"""
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     config["profile"] = _load_json_env("PROFILE_JSON", config.get("profile", {}))
     config["keywords"] = _load_json_env("KEYWORDS_JSON", config.get("keywords", {}))
-
+    config.setdefault("settings", {})
+    config["settings"]["admin_chat_id"] = _resolve_admin_chat_id(config["settings"].get("admin_chat_id", ""))
+    config["settings"]["users_file"] = config["settings"].get("users_file", "users.json")
+    config["settings"]["max_users"] = int(config["settings"].get("max_users", 30) or 30)
     return config
 
 
@@ -81,7 +95,7 @@ def validate_config(config: dict) -> None:
     if "model" not in config.get("gemini", {}):
         raise ValueError("gemini 섹션에 필수 필드 'model'이 없습니다.")
 
-    required_settings = ["state_file", "base_url", "rss_url_template"]
+    required_settings = ["state_file", "users_file", "base_url", "rss_url_template"]
     for field in required_settings:
         if field not in config.get("settings", {}):
             raise ValueError(f"settings 섹션에 필수 필드 '{field}'가 없습니다.")
@@ -90,10 +104,7 @@ def validate_config(config: dict) -> None:
         logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. 키워드 매칭으로 대체됩니다.")
 
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
-        logger.warning("TELEGRAM_BOT_TOKEN이 설정되지 않았습니다. 텔레그램 알림이 비활성화됩니다.")
-
-    if not os.environ.get("TELEGRAM_CHAT_ID"):
-        logger.warning("TELEGRAM_CHAT_ID가 설정되지 않았습니다. 텔레그램 알림이 비활성화됩니다.")
+        logger.warning("TELEGRAM_BOT_TOKEN이 설정되지 않았습니다. 명령 수집/텔레그램 알림이 비활성화됩니다.")
 
     enabled_feeds = [name for name, fc in config["feeds"].items() if fc.get("enabled", True)]
     if not enabled_feeds:
@@ -104,13 +115,90 @@ def _log_run_summary(stats: dict) -> None:
     """실행 결과 요약을 로그로 출력"""
     logger = logging.getLogger(__name__)
     logger.info(
-        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 매칭 %d건, 분석: %s",
+        "실행 요약: 피드 %d개, 수집 %d건, 신규 %d건, 사용자 %d명, 응답 %d건, 알림 %d건, 분석: %s",
         stats["feeds_collected"],
         stats["articles_found"],
         stats["new_articles"],
-        stats["matched_articles"],
+        stats["active_users"],
+        stats["command_responses"],
+        stats["notifications_sent"],
         stats["method"],
     )
+
+
+def _has_profile_data(profile: dict) -> bool:
+    return bool(profile.get("major") or profile.get("campus") or profile.get("status") or int(profile.get("year", 0)) > 0)
+
+
+def _filter_level_to_threshold(level: str) -> int:
+    normalized = (level or "medium").lower().strip()
+    if normalized == "high":
+        return 4
+    if normalized == "low":
+        return 2
+    return 3
+
+
+async def _process_command_updates(config: dict, users_state: dict) -> int:
+    """하루 1회 텔레그램 업데이트 수집 후 명령어 처리."""
+    logger = logging.getLogger(__name__)
+    last_update_id = int(users_state.get("meta", {}).get("last_update_id", 0) or 0)
+    updates = await fetch_updates(last_update_id)
+    if not updates:
+        return 0
+
+    responses: list[tuple[str, str]] = []
+    max_update_id = last_update_id
+
+    for update in updates:
+        if update.update_id is not None:
+            max_update_id = max(max_update_id, int(update.update_id))
+        responses.extend(handle_command(update, users_state, config))
+
+    users_state.setdefault("meta", {})
+    users_state["meta"]["last_update_id"] = max_update_id
+
+    sent = 0
+    for chat_id, text in responses:
+        await send_telegram(text, chat_id=chat_id)
+        sent += 1
+
+    logger.info("명령 처리 완료: 업데이트 %d건, 응답 %d건", len(updates), sent)
+    return sent
+
+
+def _build_user_match_config(base_config: dict, user: dict, threshold: int) -> dict:
+    config_copy = copy.deepcopy(base_config)
+    config_copy["profile"] = user.get("profile", {})
+    config_copy.setdefault("gemini", {})
+    config_copy["gemini"]["relevance_threshold"] = threshold
+    return config_copy
+
+
+def _migrate_legacy_single_user(config: dict, users_state: dict) -> None:
+    """기존 단일 사용자 환경변수를 다중 사용자 저장소로 1회 마이그레이션."""
+    logger = logging.getLogger(__name__)
+    users = users_state.get("users", {})
+    if isinstance(users, dict) and users:
+        return
+
+    legacy_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not legacy_chat_id:
+        return
+
+    admin_chat_id = str(config.get("settings", {}).get("admin_chat_id", "")).strip()
+    user = get_or_create_user(users_state, legacy_chat_id, admin_chat_id=admin_chat_id)
+    user["allowed"] = True
+    user["active"] = True
+
+    profile = config.get("profile", {})
+    if isinstance(profile, dict) and _has_profile_data(profile):
+        set_profile(user, "legacy PROFILE_JSON", profile)
+    else:
+        user["profile_registered"] = False
+        user["filter_level"] = "all"
+
+    logger.info("기존 TELEGRAM_CHAT_ID 기반 사용자 마이그레이션 완료: %s", legacy_chat_id)
 
 
 async def run() -> None:
@@ -124,14 +212,28 @@ async def run() -> None:
         "new_articles": 0,
         "matched_articles": 0,
         "method": "none",
+        "active_users": 0,
+        "command_responses": 0,
+        "notifications_sent": 0,
     }
 
     config = load_config()
     validate_config(config)
 
     state_path = Path(__file__).parent / config["settings"]["state_file"]
+    users_path = Path(__file__).parent / config["settings"]["users_file"]
+
     state = load_state(str(state_path))
+    users_state = load_users(str(users_path), admin_chat_id=str(config["settings"].get("admin_chat_id", "")))
+    _migrate_legacy_single_user(config, users_state)
+
     logger.info("기존 확인 공지: %d건", len(state.get("seen_ids", {})))
+
+    stats["command_responses"] = await _process_command_updates(config, users_state)
+
+    recipients = iter_active_allowed_users(users_state)
+    stats["active_users"] = len(recipients)
+    logger.info("활성 사용자: %d명", len(recipients))
 
     ssl_verify = config.get("settings", {}).get("ssl_verify", False)
     if not ssl_verify:
@@ -148,37 +250,69 @@ async def run() -> None:
     stats["new_articles"] = len(new_articles)
     logger.info("새 공지: %d건", len(new_articles))
 
-    if not new_articles:
-        logger.info("새로운 공지가 없습니다.")
-        await notify_no_new()
+    if not recipients:
+        logger.info("활성 사용자가 없어 알림 전송을 건너뜁니다.")
         mark_as_seen(all_articles, state)
         state["last_run_stats"] = stats
         save_state(state, str(state_path))
+        save_users(users_state, str(users_path))
+        _log_run_summary(stats)
+        return
+
+    if not new_articles:
+        logger.info("새로운 공지가 없습니다.")
+        for user in recipients:
+            await notify_no_new(chat_id=user["chat_id"])
+            stats["notifications_sent"] += 1
+        mark_as_seen(all_articles, state)
+        state["last_run_stats"] = stats
+        save_state(state, str(state_path))
+        save_users(users_state, str(users_path))
         _log_run_summary(stats)
         return
 
     logger.info("새 공지 본문 수집 중... (%d건)", len(new_articles))
     await enrich_articles_with_body(new_articles, config)
 
-    logger.info("Gemini로 관련도 분석 중...")
-    matched, method = match_articles(new_articles, config)
-    stats["matched_articles"] = len(matched)
-    stats["method"] = method
-    logger.info("관련 공지: %d건", len(matched))
+    cache: dict[tuple[str, int], tuple[list[tuple], str]] = {}
+    methods: set[str] = set()
 
-    if matched:
-        logger.info("텔레그램으로 관련 공지 전송 중...")
-        await notify_relevant(matched, len(new_articles))
-        logger.info("전송 완료")
-    else:
-        logger.info("관련 공지 없음 알림 전송 중...")
-        await notify_no_relevant(len(new_articles))
-        logger.info("전송 완료")
+    for user in recipients:
+        chat_id = user["chat_id"]
+        profile_registered = bool(user.get("profile_registered", False))
+        level = str(user.get("filter_level", "medium")).lower().strip()
+
+        if not profile_registered or level == "all":
+            await notify_all_new(new_articles, chat_id=chat_id)
+            stats["notifications_sent"] += 1
+            continue
+
+        threshold = _filter_level_to_threshold(level)
+        cache_key = (json.dumps(user.get("profile", {}), ensure_ascii=False, sort_keys=True), threshold)
+
+        if cache_key not in cache:
+            user_config = _build_user_match_config(config, user, threshold)
+            matched, method = match_articles(new_articles, user_config)
+            cache[cache_key] = (matched, method)
+        else:
+            matched, method = cache[cache_key]
+
+        methods.add(method)
+        stats["matched_articles"] += len(matched)
+        if matched:
+            await notify_relevant(matched, len(new_articles), chat_id=chat_id)
+        else:
+            await notify_no_relevant(len(new_articles), chat_id=chat_id)
+        stats["notifications_sent"] += 1
+
+    if methods:
+        stats["method"] = ",".join(sorted(methods))
 
     mark_as_seen(all_articles, state)
     state["last_run_stats"] = stats
     save_state(state, str(state_path))
-    logger.info("상태 저장 완료 (총 %d건 기록)", len(state["seen_ids"]))
+    save_users(users_state, str(users_path))
+    logger.info("상태 저장 완료 (공지: %d건, 사용자: %d명)", len(state.get("seen_ids", {})), len(users_state.get("users", {})))
     _log_run_summary(stats)
     logger.info("=== 완료 ===")
 
@@ -190,7 +324,8 @@ def main() -> None:
         asyncio.run(run())
     except Exception as e:
         logger.exception("모니터링 실행 중 치명적 오류 발생: %s", e)
-        asyncio.run(notify_error(str(e)))
+        admin_chat_id = os.environ.get("ADMIN_CHAT_ID", "").strip() or os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+        asyncio.run(notify_error(str(e), chat_id=admin_chat_id or None))
         sys.exit(1)
 
 

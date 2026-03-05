@@ -1,5 +1,7 @@
 """Gemini API 기반 공지 관련도 분석 모듈"""
 
+from __future__ import annotations
+
 import json
 import logging
 import os

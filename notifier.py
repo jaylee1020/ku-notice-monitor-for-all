@@ -1,5 +1,7 @@
 """텔레그램 봇 알림 모듈"""
 
+from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime
@@ -29,6 +31,16 @@ def build_relevant_message(
         )
         items.append(item)
 
+    return header + "\n".join(items)
+
+
+def build_all_new_message(articles: list[Article]) -> str:
+    """필터 없이 전체 공지를 보낼 때 메시지."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    header = f"{today} 새 공지 {len(articles)}건 (전체 전달)\n"
+    items: list[str] = []
+    for i, article in enumerate(articles, 1):
+        items.append(f"\n{i}. [{article.board_name}] {article.title}\n{article.link}")
     return header + "\n".join(items)
 
 
@@ -83,14 +95,14 @@ def split_message(text: str) -> list[str]:
     return messages
 
 
-async def send_telegram(text: str) -> None:
+async def send_telegram(text: str, chat_id: str | int | None = None) -> None:
     """텔레그램 봇으로 메시지 전송"""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    target_chat_id = str(chat_id).strip() if chat_id is not None else os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-    if not token or not chat_id:
+    if not token or not target_chat_id:
         logger.warning(
-            "TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID가 설정되지 않았습니다. "
+            "TELEGRAM_BOT_TOKEN 또는 chat_id가 설정되지 않았습니다. "
             "메시지를 전송하지 않고 콘솔에 출력합니다."
         )
         logger.info("--- 메시지 미리보기 ---\n%s", text)
@@ -98,33 +110,46 @@ async def send_telegram(text: str) -> None:
 
     bot = Bot(token=token)
     parts = split_message(text)
-    for msg in parts:
-        await bot.send_message(chat_id=chat_id, text=msg)
-    logger.info("텔레그램 메시지 전송 완료 (%d개 분할)", len(parts))
+    sent = 0
+    try:
+        for msg in parts:
+            await bot.send_message(chat_id=target_chat_id, text=msg)
+            sent += 1
+    except Exception as e:
+        logger.error("텔레그램 메시지 전송 실패 (chat_id=%s): %s", target_chat_id, e)
+        return
+    logger.info("텔레그램 메시지 전송 완료 (chat_id=%s, %d개 분할)", target_chat_id, sent)
 
 
 async def notify_relevant(
     matched: list[tuple[Article, int, str]],
     total_new: int,
+    chat_id: str | int | None = None,
 ) -> None:
     """관련 공지를 텔레그램으로 전송"""
     text = build_relevant_message(matched, total_new)
-    await send_telegram(text)
+    await send_telegram(text, chat_id=chat_id)
 
 
-async def notify_no_new() -> None:
+async def notify_all_new(articles: list[Article], chat_id: str | int | None = None) -> None:
+    """새 공지를 필터 없이 전송."""
+    text = build_all_new_message(articles)
+    await send_telegram(text, chat_id=chat_id)
+
+
+async def notify_no_new(chat_id: str | int | None = None) -> None:
     """새 공지 없음 알림"""
     text = build_no_new_message()
-    await send_telegram(text)
+    await send_telegram(text, chat_id=chat_id)
 
 
-async def notify_no_relevant(total_new: int) -> None:
+async def notify_no_relevant(total_new: int, chat_id: str | int | None = None) -> None:
     """새 공지는 있지만 관련 공지 없음 알림"""
     text = build_no_relevant_message(total_new)
-    await send_telegram(text)
+    await send_telegram(text, chat_id=chat_id)
 
 
-async def notify_error(error_detail: str) -> None:
+async def notify_error(error_detail: str, chat_id: str | int | None = None) -> None:
     """워크플로우 오류 발생 시 텔레그램으로 알림"""
     text = build_error_message(error_detail)
-    await send_telegram(text)
+    await send_telegram(text, chat_id=chat_id)

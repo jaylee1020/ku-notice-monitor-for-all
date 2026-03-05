@@ -61,8 +61,13 @@ gemini:
 # === 설정 ===
 settings:
   state_file: "state.json"
+  users_file: "users.json"
   base_url: "https://www.konkuk.ac.kr"
   rss_url_template: "https://www.konkuk.ac.kr/bbs/konkuk/{board_id}/rssList.do"
+  # 관리자 텔레그램 chat_id (관리자 명령어 사용 가능)
+  admin_chat_id: ""
+  # 허용 가능한 최대 사용자 수 (0 이하이면 무제한)
+  max_users: 30
   # 건국대 서버 SSL 인증서 문제로 인해 기본값은 false입니다.
   # 인증서 문제가 해결된 경우 true로 변경하면 보안이 강화됩니다.
   # ssl_verify가 false인 경우, 매 실행 시 SSL 상태를 자동 점검하고 로그에 기록합니다.

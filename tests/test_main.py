@@ -45,6 +45,7 @@ def _make_valid_config():
         "gemini": {"model": "gemini-flash-latest", "relevance_threshold": 3},
         "settings": {
             "state_file": "state.json",
+            "users_file": "users.json",
             "base_url": "https://example.com",
             "rss_url_template": "https://example.com/{board_id}",
         },

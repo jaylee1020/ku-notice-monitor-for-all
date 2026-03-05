@@ -4,3 +4,4 @@ __pycache__/
 logs/
 .claude/
 search_state.json
+.DS_Store
