@@ -32,6 +32,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PROFILE_JSON: ${{ secrets.PROFILE_JSON }}
           KEYWORDS_JSON: ${{ secrets.KEYWORDS_JSON }}
@@ -49,11 +50,13 @@ jobs:
         if: failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python -c "
           import asyncio, os
           from notifier import notify_error
           run_url = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          asyncio.run(notify_error(f'GitHub Actions 워크플로우 실패\n로그 확인: {run_url}', chat_id=os.environ.get('TELEGRAM_CHAT_ID', '')))
+          chat_id = os.environ.get('ADMIN_CHAT_ID', '') or os.environ.get('TELEGRAM_CHAT_ID', '')
+          asyncio.run(notify_error(f'GitHub Actions 워크플로우 실패\n로그 확인: {run_url}', chat_id=chat_id))
           "
