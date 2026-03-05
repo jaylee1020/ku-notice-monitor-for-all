@@ -57,6 +57,12 @@ feeds:
 gemini:
   model: "gemini-3.1-flash-lite-preview"
   relevance_threshold: 3      # 1-5 점수 중 이 점수 이상이면 관련 공지로 분류
+  # Gemini 3.1 Flash Lite 무료 티어 제한(RPM 15)을 고려해 호출 간격을 둡니다.
+  min_call_interval_sec: 4.2
+  # 1일 최대 호출 수 상한 (RPD 여유 범위 내에서 보수적으로 사용)
+  max_calls_per_run: 120
+  # 제한/오류로 키워드 폴백이 발생하면 남은 그룹도 키워드로 전환
+  disable_after_fallback: true
 
 # === 설정 ===
 settings:

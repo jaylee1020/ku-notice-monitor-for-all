@@ -77,9 +77,21 @@ settings:
   ssl_verify: false
 ```
 
+```yaml
+gemini:
+  model: "gemini-3.1-flash-lite-preview"
+  relevance_threshold: 3
+  min_call_interval_sec: 4.2
+  max_calls_per_run: 120
+  disable_after_fallback: true
+```
+
 - `users_file`: 사용자/명령 처리 상태 저장 파일
 - `admin_chat_id`: 관리자 chat_id
 - `max_users`: 허용 가능한 최대 사용자 수
+- `min_call_interval_sec`: Gemini 호출 간 최소 대기 시간(RPM 보호)
+- `max_calls_per_run`: 일일 실행 1회당 Gemini 호출 상한(RPD 보호)
+- `disable_after_fallback`: 제한/오류 발생 후 남은 그룹을 키워드 방식으로 자동 전환
 
 ## 로컬 실행
 
