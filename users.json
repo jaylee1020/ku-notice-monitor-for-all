@@ -1,7 +1,8 @@
 {
   "meta": {
     "last_update_id": 0,
-    "version": 1
+    "version": 1,
+    "admin_chat_id": ""
   },
   "users": {}
 }
