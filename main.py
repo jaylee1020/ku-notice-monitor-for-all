@@ -234,6 +234,29 @@ def _migrate_legacy_single_user(config: dict, users_state: dict) -> None:
     logger.info("기존 TELEGRAM_CHAT_ID 기반 사용자 마이그레이션 완료: %s", legacy_chat_id)
 
 
+async def run_commands_only() -> None:
+    """명령어만 처리하고 종료 (알림/피드 수집 없음).
+
+    GitHub 계정 없는 사용자도 텔레그램만으로 이용할 수 있도록
+    명령 처리 전용 모드를 별도 워크플로우에서 주기적으로 실행한다.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("=== 텔레그램 명령 처리 시작 ===")
+
+    config = load_config()
+    validate_config(config)
+
+    users_path = Path(__file__).parent / config["settings"]["users_file"]
+    users_state = load_users(str(users_path), admin_chat_id=str(config["settings"].get("admin_chat_id", "")))
+    _migrate_legacy_single_user(config, users_state)
+
+    responses_count = await _process_command_updates(config, users_state)
+
+    save_users(users_state, str(users_path))
+    logger.info("명령 처리 완료: %d개 응답 전송", responses_count)
+    logger.info("=== 완료 ===")
+
+
 async def run() -> None:
     logger = logging.getLogger(__name__)
     logger.info("=== 건국대 공지 모니터링 시작 ===")
@@ -368,10 +391,14 @@ async def run() -> None:
 def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
+    commands_only = "--commands-only" in sys.argv
     try:
-        asyncio.run(run())
+        if commands_only:
+            asyncio.run(run_commands_only())
+        else:
+            asyncio.run(run())
     except Exception as e:
-        logger.exception("모니터링 실행 중 치명적 오류 발생: %s", e)
+        logger.exception("실행 중 치명적 오류 발생: %s", e)
         admin_chat_id = os.environ.get("ADMIN_CHAT_ID", "").strip() or os.environ.get("TELEGRAM_CHAT_ID", "").strip()
         asyncio.run(notify_error(str(e), chat_id=admin_chat_id or None))
         sys.exit(1)
