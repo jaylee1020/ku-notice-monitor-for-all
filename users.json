@@ -2,7 +2,25 @@
   "meta": {
     "last_update_id": 0,
     "version": 1,
-    "admin_chat_id": ""
+    "admin_chat_id": "8429858488"
   },
-  "users": {}
+  "users": {
+    "8429858488": {
+      "chat_id": "8429858488",
+      "allowed": true,
+      "active": true,
+      "is_admin": true,
+      "filter_level": "medium",
+      "profile_registered": false,
+      "profile_raw": "",
+      "profile": {
+        "major": "",
+        "year": 0,
+        "campus": "",
+        "status": ""
+      },
+      "created_at": "2026-03-09T08:26:03.838606",
+      "updated_at": "2026-03-09T08:26:03.838630"
+    }
+  }
 }
