@@ -12,7 +12,10 @@ from commands import (
     parse_command,
     parse_profile_text,
 )
-from users import _default_users_state, get_or_create_user
+from users import (
+    _default_users_state,
+    get_or_create_user,
+)
 
 
 # --- parse_command ---
@@ -112,7 +115,12 @@ def test_welcome_after_approval_text():
 
 
 def test_status_text_active():
-    user = {"active": True, "profile_registered": True, "filter_level": "medium", "profile": {"major": "CS", "year": 2, "campus": "서울", "status": "재학"}}
+    user = {
+        "active": True,
+        "profile_registered": True,
+        "filter_level": "medium",
+        "profile": {"major": "CS", "year": 2, "campus": "서울", "status": "재학"},
+    }
     text = _status_text(user)
     assert "켜짐" in text
     assert "CS" in text
@@ -253,7 +261,8 @@ def test_handle_command_profile_valid():
     user = get_or_create_user(users_state, "111")
     user["allowed"] = True
 
-    result = handle_command(_make_update(111, "/profile 컴퓨터공학부 / 2학년 / 서울 / 재학"), users_state, _make_config())
+    update = _make_update(111, "/profile 컴퓨터공학부 / 2학년 / 서울 / 재학")
+    result = handle_command(update, users_state, _make_config())
     assert "저장되었습니다" in result[0][1]
     assert users_state["users"]["111"]["profile_registered"] is True
     assert "/filter" in result[0][1]

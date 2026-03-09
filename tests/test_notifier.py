@@ -1,7 +1,5 @@
 """notifier.py 단위 테스트"""
 
-from tests.helpers import make_article
-
 from constants import MAX_TELEGRAM_MESSAGE_LENGTH
 from notifier import (
     build_error_message,
@@ -10,6 +8,7 @@ from notifier import (
     build_relevant_message,
     split_message,
 )
+from tests.helpers import make_article
 
 
 # --- build_relevant_message ---
