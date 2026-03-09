@@ -3,9 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from tests.helpers import make_article
-
 from matcher import build_profile_text, build_prompt, keyword_fallback, match_articles
+from tests.helpers import make_article
 
 
 # --- build_profile_text ---

@@ -4,8 +4,6 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from tests.helpers import make_article
-
 from feeds import (
     _to_int,
     extract_article_id,
@@ -17,6 +15,7 @@ from feeds import (
     parse_pub_date,
     save_state,
 )
+from tests.helpers import make_article
 
 
 # --- parse_pub_date ---
