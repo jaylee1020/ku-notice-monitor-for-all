@@ -118,38 +118,84 @@ def parse_profile_text(text: str) -> dict:
 
 def _help_text() -> str:
     return (
-        "사용 가능한 명령어\n"
-        "/start - 알림 활성화\n"
-        "/help - 도움말\n"
-        "/profile <자연어> - 개인정보 등록\n"
-        "예시: /profile 컴퓨터공학부 / 2학년 / 서울캠퍼스 / 재학\n"
-        "/filter 없음|상|중|하 - 필터 강도 설정\n"
-        "/status - 내 설정 확인\n"
-        "/stop - 알림 비활성화\n"
-        "/delete_me - 내 정보 삭제\n"
-        "(관리자) /allow <chat_id>, /block <chat_id>"
+        "건국대 공지 모니터 도움말\n"
+        "\n"
+        "[ 기본 명령어 ]\n"
+        "/start        - 알림 시작\n"
+        "/stop         - 알림 일시 중지\n"
+        "/status       - 내 설정 확인\n"
+        "/help         - 이 도움말\n"
+        "\n"
+        "[ 맞춤 설정 ]\n"
+        "/profile <정보>  - 프로필 등록 (맞춤 알림 활성화)\n"
+        "  예시: /profile 컴퓨터공학부 / 2학년 / 서울캠퍼스 / 재학\n"
+        "\n"
+        "/filter <강도>  - 관련도 필터 설정\n"
+        "  없음  모든 공지 수신\n"
+        "  하    낮은 관련도 이상\n"
+        "  중    중간 관련도 이상 (기본값)\n"
+        "  상    높은 관련도만\n"
+        "\n"
+        "[ 기타 ]\n"
+        "/delete_me    - 내 정보 삭제\n"
+        "\n"
+        "알림은 매일 오전 10시에 전송됩니다.\n"
+        "(관리자) /allow <chat_id>  /block <chat_id>"
     )
 
 
 def _status_text(user: dict) -> str:
     profile = user.get("profile", {})
+    active_str = "켜짐" if user.get("active") else "꺼짐"
+    profile_str = "등록됨" if user.get("profile_registered") else "미등록 (프로필 없으면 전체 공지 수신)"
+    filter_str = FILTER_LABEL.get(user.get("filter_level", "medium"), "중")
     return (
-        f"허용 여부: {'허용' if user.get('allowed') else '차단'}\n"
-        f"알림 상태: {'활성' if user.get('active') else '비활성'}\n"
-        f"필터: {FILTER_LABEL.get(user.get('filter_level', 'medium'), '중')}\n"
-        f"프로필 등록: {'완료' if user.get('profile_registered') else '미등록'}\n"
-        f"학과: {profile.get('major', '') or '-'}\n"
-        f"학년: {profile.get('year', 0) or '-'}\n"
-        f"캠퍼스: {profile.get('campus', '') or '-'}\n"
-        f"상태: {profile.get('status', '') or '-'}"
+        "[ 내 설정 ]\n"
+        f"알림: {active_str}\n"
+        f"필터: {filter_str}\n"
+        f"프로필: {profile_str}\n"
+        f"  학과: {profile.get('major', '') or '-'}\n"
+        f"  학년: {profile.get('year', 0) or '-'}\n"
+        f"  캠퍼스: {profile.get('campus', '') or '-'}\n"
+        f"  재학상태: {profile.get('status', '') or '-'}"
     )
 
 
-def _blocked_text(chat_id: str) -> str:
+def _blocked_text(chat_id: str, admin_notified: bool = False) -> str:
+    base = (
+        "이 봇은 관리자 승인 후 이용할 수 있습니다.\n"
+        "\n"
+        f"내 Chat ID: {chat_id}\n"
+    )
+    if admin_notified:
+        base += "\n관리자에게 승인 요청을 보냈습니다. 승인되면 다시 /start 를 입력해 주세요."
+    else:
+        base += "\n위 Chat ID를 관리자에게 전달해 승인을 요청해 주세요."
+    return base
+
+
+def _admin_approval_request_text(chat_id: str) -> str:
     return (
-        "이 봇은 허용된 사용자만 이용할 수 있습니다.\n"
-        "관리자에게 아래 chat_id를 전달해 승인받아 주세요.\n"
-        f"chat_id: {chat_id}"
+        "새 사용자 승인 요청이 왔습니다.\n"
+        f"Chat ID: {chat_id}\n"
+        "\n"
+        f"승인하려면: /allow {chat_id}\n"
+        f"차단하려면: /block {chat_id}"
+    )
+
+
+def _welcome_after_approval_text() -> str:
+    return (
+        "봇 사용이 승인되었습니다.\n"
+        "\n"
+        "[ 시작 방법 ]\n"
+        "1. /start  를 입력해 알림을 활성화하세요.\n"
+        "2. /profile 로 프로필을 등록하면 맞춤 공지를 받을 수 있습니다.\n"
+        "   예시: /profile 컴퓨터공학부 / 2학년 / 서울캠퍼스 / 재학\n"
+        "3. /filter 로 관련도 필터를 설정할 수 있습니다.\n"
+        "\n"
+        "자세한 명령어는 /help 를 확인하세요.\n"
+        "알림은 매일 오전 10시에 전송됩니다."
     )
 
 
@@ -191,9 +237,25 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
 
     if command == "/start":
         if not user.get("allowed", False):
-            return [(chat_id, _blocked_text(chat_id))]
+            admin_chat_id = str(config.get("settings", {}).get("admin_chat_id", "")).strip()
+            admin_notified = bool(admin_chat_id and admin_chat_id != chat_id)
+            responses: list[tuple[str, str]] = [(chat_id, _blocked_text(chat_id, admin_notified=admin_notified))]
+            if admin_notified:
+                responses.append((admin_chat_id, _admin_approval_request_text(chat_id)))
+            return responses
         user["active"] = True
-        return [(chat_id, "알림이 활성화되었습니다. /help 로 명령어를 확인하세요.")]
+        if not user.get("profile_registered"):
+            return [(
+                chat_id,
+                "알림이 활성화되었습니다.\n"
+                "\n"
+                "프로필을 등록하면 내 관심사에 맞는 공지만 받을 수 있습니다.\n"
+                "예시: /profile 컴퓨터공학부 / 2학년 / 서울캠퍼스 / 재학\n"
+                "\n"
+                "등록하지 않으면 모든 새 공지를 수신합니다.\n"
+                "도움말: /help",
+            )]
+        return [(chat_id, "알림이 활성화되었습니다. 매일 오전 10시에 공지를 전송합니다.")]
 
     if command in {"/allow", "/block"}:
         if not user.get("is_admin", False):
@@ -211,7 +273,7 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
         if ok and command == "/allow" and target_id != chat_id:
             return [
                 (chat_id, result),
-                (target_id, "관리자 승인으로 봇 사용이 허용되었습니다. /start 를 입력해 시작하세요."),
+                (target_id, _welcome_after_approval_text()),
             ]
         return [(chat_id, result)]
 
@@ -223,7 +285,7 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
 
     if command == "/stop":
         user["active"] = False
-        return [(chat_id, "알림을 비활성화했습니다. 다시 받으려면 /start 를 입력하세요.")]
+        return [(chat_id, "알림이 꺼졌습니다. 다시 받으려면 /start 를 입력하세요.")]
 
     if command == "/delete_me":
         if user.get("is_admin", False):
@@ -259,10 +321,17 @@ def handle_command(update: Update, users_state: dict, config: dict) -> list[tupl
             (
                 chat_id,
                 "프로필이 저장되었습니다.\n"
-                f"학과: {profile.get('major') or '-'} / "
-                f"학년: {profile.get('year') or '-'} / "
-                f"캠퍼스: {profile.get('campus') or '-'} / "
-                f"상태: {profile.get('status') or '-'}",
+                f"  학과: {profile.get('major') or '-'}\n"
+                f"  학년: {profile.get('year') or '-'}\n"
+                f"  캠퍼스: {profile.get('campus') or '-'}\n"
+                f"  재학상태: {profile.get('status') or '-'}\n"
+                "\n"
+                "이제 맞춤 공지 알림이 활성화됩니다.\n"
+                "필터 강도를 설정할 수 있습니다.\n"
+                "  /filter 없음  모든 공지\n"
+                "  /filter 하    낮은 관련도 이상\n"
+                "  /filter 중    중간 관련도 이상 (기본값)\n"
+                "  /filter 상    높은 관련도만",
             )
         ]
 
