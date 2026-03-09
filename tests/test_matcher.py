@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 from matcher import build_profile_text, build_prompt, keyword_fallback, match_articles
 from tests.helpers import make_article
 
-
 # --- build_profile_text ---
 
 

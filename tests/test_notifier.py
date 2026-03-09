@@ -10,7 +10,6 @@ from notifier import (
 )
 from tests.helpers import make_article
 
-
 # --- build_relevant_message ---
 
 
